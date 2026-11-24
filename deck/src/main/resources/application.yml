@@ -1,0 +1,27 @@
+spring:
+  application:
+    name: deck
+  threads:
+    virtual:
+      enabled: true
+  mvc:
+    async:
+      request-timeout: 10m
+springdoc:
+  swagger-ui:
+    url: /openapi/deck.yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+deck:
+  time-factor: 1.0
+  nebius:
+    base-url: https://api.tokenfactory.nebius.com/v1/
+    models:
+      - model: meta-llama/Llama-3.3-70B-Instruct
+        context-window: 131072
+        input-per-m-tok: 0.13
+        cached-input-per-m-tok: 0.13
+        output-per-m-tok: 0.40

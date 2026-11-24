@@ -1,0 +1,15 @@
+.gradle/
+build/
+node_modules/
+src/main/frontend/generated/
+dealer-ui/src/main/frontend/generated/
+dealer-ui/vite.generated.ts
+.idea/
+*.iml
+.vscode/
+.DS_Store
+.env
+.env.*
+!.env.example
+*.log
+demo-logs/

@@ -1,0 +1,128 @@
+openapi: 3.0.3
+info:
+  title: Shared OpenAI-compatible schemas for DEALER and DECK
+  version: 0.5.0
+  description: >-
+    The subset of the OpenAI chat completions API that DEALER and DECK use. Both API documents
+    reference these schemas, so they are defined once (D102).
+paths: {}
+components:
+  schemas:
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          example: user
+        content:
+          type: string
+          example: Explain virtual threads in one paragraph.
+    StreamOptions:
+      type: object
+      properties:
+        include_usage:
+          type: boolean
+    ChatCompletionRequest:
+      type: object
+      description: >-
+        OpenAI-compatible chat completion request. Streaming only in v0.5 (`stream` must be true).
+        Fields not listed here are accepted and passed through to the provider.
+      required: [model, messages, stream]
+      additionalProperties: true
+      properties:
+        model:
+          type: string
+          example: auto-32k
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+        stream:
+          type: boolean
+          example: true
+        stream_options:
+          $ref: '#/components/schemas/StreamOptions'
+        max_tokens:
+          type: integer
+          example: 150
+        temperature:
+          type: number
+          format: double
+    ChunkDelta:
+      type: object
+      properties:
+        role:
+          type: string
+        content:
+          type: string
+    ChunkChoice:
+      type: object
+      properties:
+        index:
+          type: integer
+        delta:
+          $ref: '#/components/schemas/ChunkDelta'
+        finish_reason:
+          type: string
+          nullable: true
+    PromptTokensDetails:
+      type: object
+      properties:
+        cached_tokens:
+          type: integer
+    ChunkUsage:
+      type: object
+      properties:
+        prompt_tokens:
+          type: integer
+        completion_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+        prompt_tokens_details:
+          $ref: '#/components/schemas/PromptTokensDetails'
+    ChatCompletionChunk:
+      type: object
+      description: >-
+        One server-sent event (`data: {...}`) of a streamed completion. The stream ends with
+        `data: [DONE]`. With `stream_options.include_usage`, the last chunk carries `usage`.
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          example: chat.completion.chunk
+        created:
+          type: integer
+          format: int64
+        model:
+          type: string
+        choices:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChunkChoice'
+        usage:
+          $ref: '#/components/schemas/ChunkUsage'
+    ErrorBody:
+      type: object
+      required: [message, type]
+      properties:
+        message:
+          type: string
+        type:
+          type: string
+          example: invalid_request_error
+        code:
+          type: string
+          nullable: true
+        param:
+          type: string
+          nullable: true
+    ErrorResponse:
+      type: object
+      description: OpenAI-style error body.
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorBody'

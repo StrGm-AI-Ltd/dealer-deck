@@ -1,0 +1,67 @@
+import org.openapitools.generator.gradle.plugin.tasks.GenerateTask
+
+plugins {
+    id 'java-library'
+    id 'io.spring.dependency-management'
+    id 'org.openapi.generator'
+}
+
+dependencyManagement {
+    imports {
+        mavenBom 'org.springframework.boot:spring-boot-dependencies:4.1.1'
+    }
+}
+
+dependencies {
+    api 'org.springframework:spring-web'
+    api 'org.springframework:spring-context'
+    api 'com.fasterxml.jackson.core:jackson-annotations'
+    api 'jakarta.annotation:jakarta.annotation-api'
+    compileOnly 'jakarta.servlet:jakarta.servlet-api'
+}
+
+// The OpenAPI documents in src/main/resources/static/openapi are the single source of truth (D102).
+// They ship inside this jar, so DEALER and DECK serve them to Swagger UI at /openapi/*.yaml.
+def specDir = "$projectDir/src/main/resources/static/openapi"
+def common = [
+        useSpringBoot4          : 'true',
+        openApiNullable         : 'false',
+        documentationProvider   : 'none',
+        annotationLibrary       : 'none',
+        useBeanValidation       : 'false',
+        performBeanValidation   : 'false',
+        useTags                 : 'true',
+        dateLibrary             : 'java8',
+        hideGenerationTimestamp : 'true',
+        sourceFolder            : 'src/main/java',
+]
+def generated = []
+
+['deck', 'dealer'].each { name ->
+    ['server', 'client'].each { kind ->
+        def taskName = "generate${name.capitalize()}${kind.capitalize()}"
+        def out = layout.buildDirectory.dir("generated/$taskName").get().asFile
+        generated << "$out/src/main/java"
+        tasks.register(taskName, GenerateTask) {
+            group = 'openapi'
+            generatorName.set('spring')
+            inputSpec.set(file("$specDir/${name}.yaml"))
+            outputDir.set(out)
+            apiPackage.set("ai.strgm.${name}.api.${kind}")
+            modelPackage.set("ai.strgm.${name}.api.model")
+            invokerPackage.set("ai.strgm.${name}.api")
+            validateSpec.set(true)
+            if (kind == 'server') {
+                configOptions.set(common + [interfaceOnly: 'true', skipDefaultInterface: 'true', configPackage: "ai.strgm.${name}.api.config".toString()])
+            } else {
+                configOptions.set(common + [library: 'spring-http-interface'])
+                globalProperties.set([apis: ''])
+            }
+        }
+    }
+}
+
+sourceSets.main.java.srcDirs += generated
+tasks.named('compileJava') {
+    dependsOn tasks.matching { it.name.startsWith('generate') && it.group == 'openapi' }
+}

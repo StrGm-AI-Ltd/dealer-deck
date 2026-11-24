@@ -1,0 +1,5 @@
+server:
+  port: 8081
+deck:
+  server-name: stub
+  api-key: ${DECK_STUB_KEY:deck-key-stub}

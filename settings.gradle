@@ -1,0 +1,9 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'dealer-deck'
+include 'api', 'dealer', 'deck', 'dealer-ui'

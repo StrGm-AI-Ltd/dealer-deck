@@ -1,0 +1,217 @@
+package ai.strgm.deck;
+
+import ai.strgm.deck.api.model.Catalogue;
+import ai.strgm.deck.api.model.DeckState;
+import ai.strgm.deck.api.model.Implementation;
+import ai.strgm.deck.api.model.Lease;
+import ai.strgm.deck.api.model.LeaseState;
+import ai.strgm.deck.api.model.Prices;
+import ai.strgm.deck.api.model.Readiness;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import org.springframework.context.annotation.Profile;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Component;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
+
+/**
+ * The external DECK server, backed by Nebius Token Factory (D91, D92). Cloud capacity isn't bounded by
+ * workers, so profiles are always loaded and leases are granted at once; a lease carries its session's usage.
+ * DECK stores no provider credentials in v0.5: it forwards the one DEALER sends (D104).
+ */
+@Component
+@Profile("external")
+public class NebiusBackend implements DeckBackend {
+    private static final String PREFIX = "nebius/";
+
+    private final DeckProperties props;
+    private final ObjectMapper mapper;
+    private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+    private final Map<String, LeaseRecord> leases = Collections.synchronizedMap(new LinkedHashMap<>());
+
+    public NebiusBackend(final DeckProperties props, final ObjectMapper mapper) {
+        this.props = props;
+        this.mapper = mapper;
+    }
+
+    private DeckProperties.NebiusModel model(final String profileId) {
+        return props.nebius().models().stream().filter(m -> (PREFIX + m.model()).equals(profileId)).findFirst()
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "not_found", "Unknown profile: " + profileId));
+    }
+
+    private List<ai.strgm.deck.api.model.Profile> profiles() {
+        return props.nebius().models().stream()
+                .map(m -> new ai.strgm.deck.api.model.Profile(PREFIX + m.model(), PREFIX + m.model(), m.contextWindow(),
+                        Readiness.LOADED).provider("nebius").limitations(List.of())
+                        .prices(new Prices().inputPerMTok(m.inputPerMTok()).cachedInputPerMTok(m.cachedInputPerMTok())
+                                .outputPerMTok(m.outputPerMTok())))
+                .toList();
+    }
+
+    @Override
+    public Catalogue catalogue() {
+        return new Catalogue(props.serverName(), Implementation.EXTERNAL, profiles());
+    }
+
+    @Override
+    public Lease acquire(final String profileId, final String sessionRef) {
+        model(profileId);
+        final var lease = new LeaseRecord(profileId, sessionRef, LeaseState.READY);
+        leases.put(lease.id, lease);
+        return lease.toApi();
+    }
+
+    private LeaseRecord record(final String id) {
+        final var l = leases.get(id);
+        if (l == null) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "not_found", "Unknown lease: " + id);
+        }
+        return l;
+    }
+
+    @Override
+    public Lease get(final String leaseId) {
+        return record(leaseId).toApi();
+    }
+
+    @Override
+    public void release(final String leaseId) {
+        final var l = record(leaseId);
+        if (l.active()) {
+            l.state = LeaseState.RELEASED;
+        }
+    }
+
+    @Override
+    public Lease evict(final String leaseId) {
+        final var l = record(leaseId);
+        if (l.active()) {
+            l.state = LeaseState.EVICTED;
+        }
+        return l.toApi();
+    }
+
+    private double cost(final LeaseRecord l) {
+        final var m = model(l.profileId);
+        synchronized (l) {
+            return ((l.promptTokens - l.cachedTokens) * m.inputPerMTok() + l.cachedTokens * m.cachedInputPerMTok()
+                    + l.completionTokens * m.outputPerMTok()) / 1_000_000.0;
+        }
+    }
+
+    @Override
+    public DeckState state() {
+        final List<LeaseRecord> all;
+        synchronized (leases) {
+            all = new ArrayList<>(leases.values());
+        }
+        final var spend = all.stream().mapToDouble(this::cost).sum();
+        final var recent = all.subList(Math.max(0, all.size() - 30), all.size()).stream().map(LeaseRecord::toApi).toList();
+        return new DeckState(props.serverName(), Implementation.EXTERNAL, profiles(), recent).provider("nebius")
+                .spendUsd(spend);
+    }
+
+    @Override
+    public StreamingResponseBody chat(final String leaseId, final String providerAuthorization, final JsonNode request) {
+        if (providerAuthorization == null || providerAuthorization.isBlank()) {
+            throw new ApiException(HttpStatus.UNAUTHORIZED, "authentication_error",
+                    "Missing X-Provider-Authorization: this DECK server forwards the provider credential it receives (D104)");
+        }
+        final var lease = record(leaseId);
+        if (!lease.active()) {
+            throw new ApiException(HttpStatus.CONFLICT, "lease_inactive", "Lease " + leaseId + " is " + lease.state.getValue());
+        }
+        final var m = model(lease.profileId);
+        final var body = (ObjectNode) request.deepCopy();
+        body.put("model", m.model());
+        body.put("stream", true);
+        body.putObject("stream_options").put("include_usage", true);
+        final var base = props.nebius().baseUrl().endsWith("/") ? props.nebius().baseUrl() : props.nebius().baseUrl() + "/";
+        final var upstream = HttpRequest.newBuilder(URI.create(base + "chat/completions"))
+                .header("Authorization", providerAuthorization)
+                .header("Content-Type", "application/json")
+                .header("Accept", "text/event-stream")
+                .timeout(Duration.ofMinutes(5))
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+        final HttpResponse<java.io.InputStream> response;
+        try {
+            response = http.send(upstream, HttpResponse.BodyHandlers.ofInputStream());
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new ApiException(HttpStatus.GATEWAY_TIMEOUT, "upstream_error", "Nebius Token Factory unreachable: " + e.getMessage());
+        }
+        if (response.statusCode() != 200) {
+            final String text;
+            try (var in = response.body()) {
+                text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            } catch (Exception e) {
+                throw new ApiException(HttpStatus.BAD_GATEWAY, "upstream_error", "Nebius Token Factory error " + response.statusCode());
+            }
+            final var status = switch (response.statusCode()) {
+                case 429 -> HttpStatus.TOO_MANY_REQUESTS;
+                case 401, 403 -> HttpStatus.UNAUTHORIZED;
+                case 400, 404, 422 -> HttpStatus.BAD_REQUEST;
+                default -> HttpStatus.SERVICE_UNAVAILABLE;
+            };
+            throw new UpstreamException(status, text.isBlank() ? "{\"error\":{\"message\":\"Nebius Token Factory error "
+                    + response.statusCode() + "\",\"type\":\"upstream_error\"}}" : text,
+                    response.headers().firstValue("Retry-After").orElse(null));
+        }
+        final var prompt = Json.promptTokens(request);
+        final StreamingResponseBody stream = out -> {
+            boolean sawUsage = false;
+            long chars = 0;
+            try (var reader = new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (line.startsWith("data:")) {
+                        final var data = line.substring(5).trim();
+                        if (!data.equals("[DONE]") && data.startsWith("{")) {
+                            final var chunk = mapper.readTree(data);
+                            final var usage = chunk.path("usage");
+                            if (usage.isObject()) {
+                                sawUsage = true;
+                                lease.addUsage(Json.number(usage.path("prompt_tokens")),
+                                        Json.number(usage.path("prompt_tokens_details").path("cached_tokens")),
+                                        Json.number(usage.path("completion_tokens")), false);
+                            }
+                            final var choices = chunk.path("choices");
+                            for (int i = 0; i < choices.size(); i++) {
+                                chars += Json.text(choices.get(i).path("delta").path("content")).length();
+                            }
+                        }
+                    }
+                    out.write((line + "\n").getBytes(StandardCharsets.UTF_8));
+                    if (line.isEmpty()) {
+                        out.flush();
+                    }
+                }
+            } finally {
+                if (!sawUsage) {
+                    lease.addUsage(prompt, 0, Math.max(1, chars / 4), true);
+                }
+                out.flush();
+            }
+        };
+        return stream;
+    }
+}

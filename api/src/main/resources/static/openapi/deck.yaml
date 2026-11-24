@@ -1,0 +1,368 @@
+openapi: 3.0.3
+info:
+  title: DECK API
+  version: 0.5.0
+  description: >-
+    One interface for every DECK server, local or external (D105). A DECK server publishes a
+    capacity-aware catalogue of serving profiles and grants leases on them; DEALER routes and evicts
+    in profile and lease terms only, without knowing the hardware (D18, D74).
+    In v0.5 there are two implementations: the external server backed by Nebius Token Factory, and
+    a local stub that simulates two workers. Every endpoint requires DEALER's DECK key (D104).
+servers:
+  - url: http://localhost:8081
+    description: DECK stub
+  - url: http://localhost:8082
+    description: DECK external (Nebius Token Factory)
+security:
+  - bearerAuth: []
+tags:
+  - name: Catalogue
+    description: Serving profiles, readiness and limitations
+  - name: Leases
+    description: Exclusive use of a profile by one session
+  - name: Chat
+    description: OpenAI-compatible streaming chat on a leased profile
+  - name: Metrics
+    description: Observability of this DECK server
+paths:
+  /catalogue:
+    get:
+      tags: [Catalogue]
+      operationId: getCatalogue
+      summary: The serving profiles this server offers
+      responses:
+        '200':
+          description: The catalogue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Catalogue'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /leases:
+    post:
+      tags: [Leases]
+      operationId: acquireLease
+      summary: Atomically acquire a lease on a profile for a session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeaseRequest'
+      responses:
+        '201':
+          description: The lease. It starts in `loading` if the profile has to be loaded first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lease'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The profile can't be leased now. `blockers` lists the leases in the way.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaseConflict'
+  /leases/{leaseId}:
+    parameters:
+      - $ref: '#/components/parameters/LeaseId'
+    get:
+      tags: [Leases]
+      operationId: getLease
+      summary: A lease, with its state and accumulated usage
+      responses:
+        '200':
+          description: The lease
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lease'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Leases]
+      operationId: releaseLease
+      summary: Release a lease
+      responses:
+        '204':
+          description: Released
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /leases/{leaseId}/evict:
+    parameters:
+      - $ref: '#/components/parameters/LeaseId'
+    post:
+      tags: [Leases]
+      operationId: evictLease
+      summary: Evict a lease (DEALER calls this between requests)
+      responses:
+        '200':
+          description: The evicted lease
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lease'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/chat/completions:
+    post:
+      tags: [Chat]
+      operationId: createChatCompletion
+      summary: OpenAI-compatible streaming chat completion on a leased profile
+      description: >-
+        Streaming only. The response is a server-sent event stream of `ChatCompletionChunk`
+        objects ending with `data: [DONE]`. An external server forwards `X-Provider-Authorization`
+        to its provider as `Authorization`; in v0.5 DECK stores no provider credentials (D104).
+      parameters:
+        - name: X-Lease-Id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: X-Provider-Authorization
+          in: header
+          required: false
+          description: The provider credential, e.g. `Bearer <Nebius key>`. Required by external servers.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: 'common.yaml#/components/schemas/ChatCompletionRequest'
+      responses:
+        '200':
+          description: The streamed completion
+          content:
+            text/event-stream:
+              schema:
+                $ref: 'common.yaml#/components/schemas/ChatCompletionChunk'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+  /metrics/state:
+    get:
+      tags: [Metrics]
+      operationId: getDeckState
+      summary: This server's configuration, leases and spend
+      responses:
+        '200':
+          description: The current state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeckState'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: DEALER's key for this DECK server
+  parameters:
+    LeaseId:
+      name: leaseId
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    Error:
+      description: OpenAI-style error
+      content:
+        application/json:
+          schema:
+            $ref: 'common.yaml#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Missing or invalid DECK key
+      content:
+        application/json:
+          schema:
+            $ref: 'common.yaml#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Unknown profile or lease
+      content:
+        application/json:
+          schema:
+            $ref: 'common.yaml#/components/schemas/ErrorResponse'
+  schemas:
+    Implementation:
+      type: string
+      enum: [stub, external]
+    Readiness:
+      type: string
+      enum: [loaded, cold, asleep, unavailable]
+    LeaseState:
+      type: string
+      enum: [loading, ready, released, evicted]
+    Prices:
+      type: object
+      description: USD per 1M tokens
+      properties:
+        inputPerMTok:
+          type: number
+          format: double
+        cachedInputPerMTok:
+          type: number
+          format: double
+        outputPerMTok:
+          type: number
+          format: double
+    Profile:
+      type: object
+      required: [id, model, contextWindow, readiness]
+      properties:
+        id:
+          type: string
+          example: small-a
+        model:
+          type: string
+          example: stub/small-a
+        provider:
+          type: string
+          description: Set by external servers, e.g. `nebius`
+        contextWindow:
+          type: integer
+          example: 32768
+        readiness:
+          $ref: '#/components/schemas/Readiness'
+        etaSeconds:
+          type: number
+          format: double
+          description: Time until the profile is ready, if it isn't loaded
+        limitations:
+          type: array
+          description: The profiles that become unavailable while this one is leased
+          items:
+            type: string
+        prices:
+          $ref: '#/components/schemas/Prices'
+        timeToFirstTokenMs:
+          type: integer
+        decodeTokensPerSecond:
+          type: number
+          format: double
+    Catalogue:
+      type: object
+      required: [server, implementation, profiles]
+      properties:
+        server:
+          type: string
+        implementation:
+          $ref: '#/components/schemas/Implementation'
+        profiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/Profile'
+    LeaseRequest:
+      type: object
+      required: [profileId, sessionRef]
+      properties:
+        profileId:
+          type: string
+        sessionRef:
+          type: string
+          description: Opaque reference to DEALER's session
+    Usage:
+      type: object
+      properties:
+        promptTokens:
+          type: integer
+          format: int64
+        cachedTokens:
+          type: integer
+          format: int64
+        completionTokens:
+          type: integer
+          format: int64
+        estimated:
+          type: boolean
+          description: True if the provider sent no usage and the counts are estimates
+    Lease:
+      type: object
+      required: [id, profileId, state]
+      properties:
+        id:
+          type: string
+        profileId:
+          type: string
+        sessionRef:
+          type: string
+        state:
+          $ref: '#/components/schemas/LeaseState'
+        createdAtMs:
+          type: integer
+          format: int64
+        readyAtMs:
+          type: integer
+          format: int64
+        usage:
+          $ref: '#/components/schemas/Usage'
+    LeaseConflict:
+      type: object
+      required: [error, blockers]
+      properties:
+        error:
+          $ref: 'common.yaml#/components/schemas/ErrorBody'
+        blockers:
+          type: array
+          description: IDs of the leases that block this one
+          items:
+            type: string
+    Worker:
+      type: object
+      description: A simulated worker (stub only)
+      properties:
+        id:
+          type: string
+        loadedProfile:
+          type: string
+        state:
+          type: string
+          example: busy
+    DeckState:
+      type: object
+      required: [server, implementation, profiles, leases]
+      properties:
+        server:
+          type: string
+        implementation:
+          $ref: '#/components/schemas/Implementation'
+        provider:
+          type: string
+        workers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Worker'
+        profiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/Profile'
+        leases:
+          type: array
+          items:
+            $ref: '#/components/schemas/Lease'
+        spendUsd:
+          type: number
+          format: double

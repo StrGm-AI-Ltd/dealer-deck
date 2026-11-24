@@ -1,0 +1,40 @@
+package ai.strgm.deck;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RestController;
+import tools.jackson.databind.ObjectMapper;
+
+/**
+ * The streaming chat endpoint. It's described in the DECK OpenAPI document, but hand-written: the generated
+ * Spring interfaces return one object, and this endpoint streams server-sent events (the streaming exception, D100).
+ */
+@RestController
+public class ChatController {
+    private final DeckBackend backend;
+    private final ObjectMapper mapper;
+
+    public ChatController(final DeckBackend backend, final ObjectMapper mapper) {
+        this.backend = backend;
+        this.mapper = mapper;
+    }
+
+    @PostMapping("/v1/chat/completions")
+    public ResponseEntity<StreamingResponseBody> chat(@RequestHeader(value = "X-Lease-Id", required = false) final String leaseId,
+            @RequestHeader(value = "X-Provider-Authorization", required = false) final String providerAuthorization,
+            @RequestBody final String body) {
+        if (leaseId == null || leaseId.isBlank()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "Missing required header X-Lease-Id");
+        }
+        final var request = mapper.readTree(body);
+        if (!Json.bool(request.path("stream"))) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "Streaming only: set \"stream\": true");
+        }
+        return ResponseEntity.ok().contentType(MediaType.TEXT_EVENT_STREAM).body(backend.chat(leaseId, providerAuthorization, request));
+    }
+}

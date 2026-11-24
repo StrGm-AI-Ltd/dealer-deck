@@ -1,0 +1,281 @@
+openapi: 3.0.3
+info:
+  title: DEALER API
+  version: 0.5.0
+  description: >-
+    DEALER is the router for agent fleets: one OpenAI-compatible endpoint that routes agent sessions
+    across a DECK of local and cloud LLM servers by client priority, availability and cost.
+    Agents and OpenAI SDKs use it by changing their base URL. Clients authenticate with their API key.
+servers:
+  - url: http://localhost:8080
+    description: DEALER
+security:
+  - bearerAuth: []
+tags:
+  - name: Chat
+    description: OpenAI-compatible streaming chat completions
+  - name: Models
+    description: The models DEALER can route to, including virtual models
+  - name: Metrics
+    description: Metrics and observability (read by the DEALER UI)
+paths:
+  /v1/chat/completions:
+    post:
+      tags: [Chat]
+      operationId: createChatCompletion
+      summary: OpenAI-compatible streaming chat completion
+      description: >-
+        Streaming only in v0.5. The request waits in DEALER's queue until it can be placed on a DECK
+        profile. A session keeps its lease across requests (sticky) until the lease idles out or is
+        evicted by a higher-priority client. The response is a server-sent event stream of
+        `ChatCompletionChunk` objects ending with `data: [DONE]`.
+      parameters:
+        - name: X-Session-Id
+          in: header
+          required: true
+          description: The agent session; scoped to the client
+          schema:
+            type: string
+        - name: X-Request-Priority
+          in: header
+          required: false
+          description: Orders this client's own requests (1–100, default 50). Never evicts.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: 'common.yaml#/components/schemas/ChatCompletionRequest'
+      responses:
+        '200':
+          description: The streamed completion. `X-Dealer-Server` and `X-Dealer-Profile` name where it ran.
+          headers:
+            X-Dealer-Server:
+              schema:
+                type: string
+            X-Dealer-Profile:
+              schema:
+                type: string
+          content:
+            text/event-stream:
+              schema:
+                $ref: 'common.yaml#/components/schemas/ChatCompletionChunk'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+  /v1/models:
+    get:
+      tags: [Models]
+      operationId: listModels
+      summary: Every DECK server's profiles plus the virtual models
+      responses:
+        '200':
+          description: OpenAI-style model list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelList'
+        '401':
+          $ref: '#/components/responses/Error'
+  /metrics/state:
+    get:
+      tags: [Metrics]
+      operationId: getDealerState
+      summary: The queue, sessions and leases, evictions, tokens and cost
+      responses:
+        '200':
+          description: The current state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DealerState'
+        '401':
+          $ref: '#/components/responses/Error'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: A client API key (or the metrics key, for /metrics only)
+  responses:
+    Error:
+      description: OpenAI-style error
+      content:
+        application/json:
+          schema:
+            $ref: 'common.yaml#/components/schemas/ErrorResponse'
+  schemas:
+    Model:
+      type: object
+      required: [id, object, owned_by]
+      properties:
+        id:
+          type: string
+          example: auto-32k
+        object:
+          type: string
+          example: model
+        created:
+          type: integer
+          format: int64
+        owned_by:
+          type: string
+          example: dealer
+        server:
+          type: string
+          description: The DECK server, for real profiles
+        egress:
+          type: string
+          description: '`local` or `external`, set by DEALER''s operator (D94)'
+        context_window:
+          type: integer
+        virtual:
+          type: boolean
+          description: True for auto-* models that DEALER places itself
+    ModelList:
+      type: object
+      required: [object, data]
+      properties:
+        object:
+          type: string
+          example: list
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Model'
+    ClientInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        priority:
+          type: integer
+        externalRouting:
+          type: boolean
+    QueuedRequest:
+      type: object
+      properties:
+        client:
+          type: string
+        sessionId:
+          type: string
+        model:
+          type: string
+        clientPriority:
+          type: integer
+        requestPriority:
+          type: integer
+        waitingMs:
+          type: integer
+          format: int64
+        reservedProfile:
+          type: string
+          description: A profile being drained for this request, if any
+    SessionInfo:
+      type: object
+      properties:
+        client:
+          type: string
+        sessionId:
+          type: string
+        model:
+          type: string
+        server:
+          type: string
+        egress:
+          type: string
+        profileId:
+          type: string
+        leaseId:
+          type: string
+        leaseState:
+          type: string
+        leaseAgeMs:
+          type: integer
+          format: int64
+        idleMs:
+          type: integer
+          format: int64
+        inFlight:
+          type: integer
+        evictPending:
+          type: boolean
+        requests:
+          type: integer
+        promptTokens:
+          type: integer
+          format: int64
+        cachedTokens:
+          type: integer
+          format: int64
+        completionTokens:
+          type: integer
+          format: int64
+        costUsd:
+          type: number
+          format: double
+    EvictionEvent:
+      type: object
+      properties:
+        atMs:
+          type: integer
+          format: int64
+        victimClient:
+          type: string
+        victimSession:
+          type: string
+        server:
+          type: string
+        profileId:
+          type: string
+        byClient:
+          type: string
+        reason:
+          type: string
+    ServerInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+        egress:
+          type: string
+        reachable:
+          type: boolean
+        profiles:
+          type: integer
+    DealerState:
+      type: object
+      properties:
+        clients:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClientInfo'
+        servers:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServerInfo'
+        queue:
+          type: array
+          items:
+            $ref: '#/components/schemas/QueuedRequest'
+        sessions:
+          type: array
+          items:
+            $ref: '#/components/schemas/SessionInfo'
+        evictions:
+          type: array
+          items:
+            $ref: '#/components/schemas/EvictionEvent'
