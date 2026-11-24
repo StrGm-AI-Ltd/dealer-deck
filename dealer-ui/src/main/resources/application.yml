@@ -1,0 +1,19 @@
+server:
+  port: 8090
+spring:
+  application:
+    name: dealer-ui
+vaadin:
+  launch-browser: false
+ui:
+  dealer:
+    name: dealer
+    url: http://localhost:8080
+    key: ${DEALER_METRICS_KEY:metrics-key}
+  decks:
+    - name: stub
+      url: http://localhost:8081
+      key: ${DECK_STUB_KEY:deck-key-stub}
+    - name: nebius
+      url: http://localhost:8082
+      key: ${DECK_NEBIUS_KEY:deck-key-nebius}

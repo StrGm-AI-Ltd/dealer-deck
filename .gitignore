@@ -13,3 +13,4 @@ dealer-ui/vite.generated.ts
 !.env.example
 *.log
 demo-logs/
+target/

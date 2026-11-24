@@ -10,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
@@ -61,7 +62,11 @@ public class DeckRegistry {
     public DeckRegistry(final DealerProperties props, final ObjectMapper mapper) {
         this.mapper = mapper;
         for (final var def : props.servers()) {
-            final var rest = RestClient.builder().baseUrl(def.url()).defaultHeader("Authorization", "Bearer " + def.key()).build();
+            final var requests = new SimpleClientHttpRequestFactory();
+            requests.setConnectTimeout(2000);
+            requests.setReadTimeout(10000);
+            final var rest = RestClient.builder().requestFactory(requests).baseUrl(def.url())
+                    .defaultHeader("Authorization", "Bearer " + def.key()).build();
             final var factory = HttpServiceProxyFactory.builderFor(RestClientAdapter.create(rest)).build();
             final var credential = def.providerCredentialEnv() == null ? null : System.getenv(def.providerCredentialEnv());
             servers.put(def.name(), new Server(def, factory.createClient(CatalogueApi.class),
