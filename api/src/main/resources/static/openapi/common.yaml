@@ -23,6 +23,7 @@ components:
       properties:
         include_usage:
           type: boolean
+          example: true
     ChatCompletionRequest:
       type: object
       description: >-
@@ -49,37 +50,48 @@ components:
         temperature:
           type: number
           format: double
+          example: 0.2
     ChunkDelta:
       type: object
       properties:
         role:
           type: string
+          description: Only in the first chunk
+          example: assistant
         content:
           type: string
+          example: 'Here '
     ChunkChoice:
       type: object
       properties:
         index:
           type: integer
+          example: 0
         delta:
           $ref: '#/components/schemas/ChunkDelta'
         finish_reason:
           type: string
           nullable: true
+          description: Null until the last chunk of the answer, then `stop`
+          example: stop
     PromptTokensDetails:
       type: object
       properties:
         cached_tokens:
           type: integer
+          example: 0
     ChunkUsage:
       type: object
       properties:
         prompt_tokens:
           type: integer
+          example: 10
         completion_tokens:
           type: integer
+          example: 3
         total_tokens:
           type: integer
+          example: 13
         prompt_tokens_details:
           $ref: '#/components/schemas/PromptTokensDetails'
     ChatCompletionChunk:
@@ -90,14 +102,18 @@ components:
       properties:
         id:
           type: string
+          example: chatcmpl-lease-24af55a1
         object:
           type: string
           example: chat.completion.chunk
         created:
           type: integer
           format: int64
+          description: Unix seconds
+          example: 1795545071
         model:
           type: string
+          example: stub/small-a
         choices:
           type: array
           items:
@@ -110,6 +126,7 @@ components:
       properties:
         message:
           type: string
+          example: 'Streaming only: set "stream": true'
         type:
           type: string
           example: invalid_request_error

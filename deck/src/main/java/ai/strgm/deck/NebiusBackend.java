@@ -1,11 +1,14 @@
 package ai.strgm.deck;
 
-import ai.strgm.deck.api.model.Catalogue;
 import ai.strgm.deck.api.model.DeckState;
 import ai.strgm.deck.api.model.Implementation;
 import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseState;
+import ai.strgm.deck.api.model.Limitations;
+import ai.strgm.deck.api.model.ModelProfile;
+import ai.strgm.deck.api.model.ModelProfiles;
 import ai.strgm.deck.api.model.Prices;
+import ai.strgm.deck.api.model.Quantization;
 import ai.strgm.deck.api.model.Readiness;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -55,10 +58,11 @@ public class NebiusBackend implements DeckBackend {
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "not_found", "Unknown profile: " + profileId));
     }
 
-    private List<ai.strgm.deck.api.model.Profile> profiles() {
+    private List<ModelProfile> profiles() {
         return props.nebius().models().stream()
-                .map(m -> new ai.strgm.deck.api.model.Profile(PREFIX + m.model(), PREFIX + m.model(), m.contextWindow(),
-                        Readiness.LOADED).provider("nebius").limitations(List.of())
+                .map(m -> new ModelProfile(PREFIX + m.model(), PREFIX + m.model(), m.contextWindow(),
+                        Readiness.LOADED).provider("nebius").limitations(new Limitations())
+                        .quantization(m.quantization() == null ? null : new Quantization(m.quantization()).bitsPerWeight(m.bitsPerWeight()))
                         .maxLeases(m.maxLeases()).activeLeases(active(PREFIX + m.model()).size())
                         .prices(new Prices().inputPerMTok(m.inputPerMTok()).cachedInputPerMTok(m.cachedInputPerMTok())
                                 .outputPerMTok(m.outputPerMTok())))
@@ -66,8 +70,8 @@ public class NebiusBackend implements DeckBackend {
     }
 
     @Override
-    public Catalogue catalogue() {
-        return new Catalogue(props.serverName(), Implementation.EXTERNAL, profiles());
+    public ModelProfiles modelProfiles() {
+        return new ModelProfiles(props.serverName(), Implementation.EXTERNAL, profiles());
     }
 
     private List<String> active(final String profileId) {
@@ -95,6 +99,17 @@ public class NebiusBackend implements DeckBackend {
             throw new ApiException(HttpStatus.NOT_FOUND, "not_found", "Unknown lease: " + id);
         }
         return l;
+    }
+
+    @Override
+    public List<Lease> leases(final String profileId) {
+        if (profileId != null) {
+            model(profileId);   // 404 for an unknown profile
+        }
+        synchronized (leases) {
+            return leases.values().stream().filter(LeaseRecord::active)
+                    .filter(l -> profileId == null || l.profileId.equals(profileId)).map(LeaseRecord::toApi).toList();
+        }
     }
 
     @Override

@@ -38,7 +38,7 @@ v0.5 was built at a hackathon. The local DECK server is a **simulated stub**; th
   │ API keys + client priority · sessions (X-Session-Id) · router queue      │
   │ placement (local first) · eviction between requests · tokens + cost      │
   └───────────────┬───────────────────────────────────────┬─────────────────┘
-                  │ DECK API (catalogue, leases, chat, metrics; DECK key)
+                  │ DECK API (model profiles, leases, chat, metrics; DECK key)
                   ▼                                       ▼
      DECK stub (:8081, local)                 DECK external (:8082)
      3 profiles over 2 simulated workers      nebius/… profiles, lease budgets
@@ -49,8 +49,9 @@ v0.5 was built at a hackathon. The local DECK server is a **simulated stub**; th
 
 - **DEALER** knows nothing about hardware. It routes and evicts in profile and lease terms only.
 - **DECK** is one interface with two implementations: the external server (Nebius in v0.5) and the
-  local server (a stub in v0.5; real BC-250 boards and a Mac in v1). A DECK server publishes a
-  capacity-aware catalogue (readiness, limitations, context windows, prices, budgets) and grants leases.
+  local server (a stub in v0.5; real BC-250 boards and a Mac in v1). A DECK server publishes capacity-aware
+  model profiles (readiness, loading time, limitations, context windows, prefill and decode speeds by context
+  size, quantization, prices, budgets) and grants leases.
 - **The DEALER UI** is a separate app that reads both services' metrics REST APIs. The servers define no UI.
 
 ## API first
@@ -139,7 +140,8 @@ All keys in the configuration files are demo values. Override them with environm
 
 Two workers and three profiles: `small-a` and `small-b` (one worker each, 32k context) and `large`
 (both workers, 131k context). Leasing `large` is blocked by both small leases, and switching between
-them takes a simulated load time. Tokens stream at each profile's simulated speed. The text is canned:
+them takes a simulated load time. Prefill and decode speeds fall as the context grows; a request streams at
+the speeds its profile advertises for the prompt's size. The text is canned:
 the stub demonstrates scheduling, not model quality.
 
 ## Prior art, and what's different

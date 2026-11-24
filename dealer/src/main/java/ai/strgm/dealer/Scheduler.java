@@ -4,8 +4,10 @@ import ai.strgm.dealer.DealerProperties.ClientDef;
 import ai.strgm.dealer.DeckRegistry.ProfileRef;
 import ai.strgm.dealer.api.model.EvictionEvent;
 import ai.strgm.dealer.api.model.QueuedRequest;
+import ai.strgm.dealer.api.model.ServerType;
 import ai.strgm.dealer.api.model.SessionInfo;
 import ai.strgm.deck.api.model.LeaseState;
+import ai.strgm.deck.api.model.ModelProfile;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -230,12 +232,17 @@ public class Scheduler {
             if (r.key().equals(c.key())) {
                 return true;
             }
-            if (r.server() == c.server() && (r.profile().getLimitations().contains(c.profile().getId())
-                    || c.profile().getLimitations().contains(r.profile().getId()))) {
+            if (r.server() == c.server() && (reduces(r.profile(), c.profile().getId()) || reduces(c.profile(), r.profile().getId()))) {
                 return true;
             }
         }
         return false;
+    }
+
+    /** Whether a lease on {@code p} reduces the leases another profile on its server can grant. Any reduction counts. */
+    private static boolean reduces(final ModelProfile p, final String otherId) {
+        return p.getLimitations() != null && p.getLimitations().getLeaseReductions() != null
+                && p.getLimitations().getLeaseReductions().stream().anyMatch(r -> r.getProfileId().equals(otherId));
     }
 
     /** Places every placeable waiter, in priority order, and starts evictions where client priority allows. */
@@ -302,8 +309,8 @@ public class Scheduler {
             }
             v.evictPending = true;
             v.leaseState = "evicting";
-            evictions.addLast(new EvictionEvent().atMs(now).victimClient(v.client.name()).victimSession(v.id)
-                    .server(target.server().name()).profileId(v.profile.profile().getId()).byClient(w.session.client.name())
+            evictions.addLast(new EvictionEvent().createdAt(now / 1000).victimClient(v.client.name()).victimSession(v.id)
+                    .deckServer(target.server().name()).profileId(v.profile.profile().getId()).byClient(w.session.client.name())
                     .reason("priority " + w.session.client.priority() + " > " + v.client.priority() + " needs " + target.profile().getId()));
             while (evictions.size() > 50) {
                 evictions.removeFirst();
@@ -347,8 +354,8 @@ public class Scheduler {
         synchronized (lock) {
             final var now = System.currentTimeMillis();
             return sessions.values().stream().map(s -> new SessionInfo().client(s.client.name()).sessionId(s.id).model(s.model)
-                    .server(s.profile == null ? null : s.profile.server().name())
-                    .egress(s.profile == null ? null : s.profile.server().def().egress())
+                    .deckServer(s.profile == null ? null : s.profile.server().name())
+                    .serverType(s.profile == null ? null : ServerType.fromValue(s.profile.server().def().egress()))
                     .profileId(s.profile == null ? null : s.profile.profile().getId()).leaseId(s.leaseId)
                     .leaseState(s.leaseState).leaseAgeMs(s.leaseId == null || s.leaseReadyAt == 0 ? null : now - s.leaseReadyAt)
                     .idleMs(s.inFlight > 0 ? 0L : now - s.lastActivity).inFlight(s.inFlight).evictPending(s.evictPending)

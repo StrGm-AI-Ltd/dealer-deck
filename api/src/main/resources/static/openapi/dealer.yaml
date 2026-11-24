@@ -116,9 +116,17 @@ components:
           schema:
             $ref: 'common.yaml#/components/schemas/ErrorResponse'
   schemas:
+    ServerType:
+      type: string
+      description: >-
+        The type of a DECK server, set per server by DEALER's operator, not by the server (D94): `local`
+        hardware, or an `external` cloud provider. Only clients allowed external routing are placed on
+        `external` servers. Null where no DECK server applies, e.g. on virtual models.
+      enum: [local, external]
+      example: local
     Model:
       type: object
-      required: [id, object, owned_by]
+      required: [id, object, created, owned_by]
       properties:
         id:
           type: string
@@ -129,15 +137,19 @@ components:
         created:
           type: integer
           format: int64
+          description: >-
+            Unix seconds: DEALER's start time, since neither virtual models nor DECK profiles have a creation date
+            of their own
+          example: 1795545071
         owned_by:
           type: string
           example: dealer
-        server:
+        deck_server:
           type: string
-          description: The DECK server, for real profiles
-        egress:
-          type: string
-          description: '`local` or `external`, set by DEALER''s operator (D94)'
+          description: The DECK server that serves this profile; null for virtual models
+          example: stub
+        server_type:
+          $ref: '#/components/schemas/ServerType'
         context_window:
           type: integer
         virtual:
@@ -161,25 +173,25 @@ components:
           type: string
         priority:
           type: integer
-        externalRouting:
+        external_routing:
           type: boolean
     QueuedRequest:
       type: object
       properties:
         client:
           type: string
-        sessionId:
+        session_id:
           type: string
         model:
           type: string
-        clientPriority:
+        client_priority:
           type: integer
-        requestPriority:
+        request_priority:
           type: integer
-        waitingMs:
+        waiting_ms:
           type: integer
           format: int64
-        reservedProfile:
+        reserved_profile:
           type: string
           description: A profile being drained for this request, if any
     SessionInfo:
@@ -187,59 +199,65 @@ components:
       properties:
         client:
           type: string
-        sessionId:
+        session_id:
           type: string
         model:
           type: string
-        server:
+        deck_server:
           type: string
-        egress:
+          description: The DECK server the session's lease is on; null without a lease
+          example: stub
+        server_type:
+          $ref: '#/components/schemas/ServerType'
+        profile_id:
           type: string
-        profileId:
+        lease_id:
           type: string
-        leaseId:
+        lease_state:
           type: string
-        leaseState:
-          type: string
-        leaseAgeMs:
+        lease_age_ms:
           type: integer
           format: int64
-        idleMs:
+        idle_ms:
           type: integer
           format: int64
-        inFlight:
+        in_flight:
           type: integer
-        evictPending:
+        evict_pending:
           type: boolean
         requests:
           type: integer
-        promptTokens:
+        prompt_tokens:
           type: integer
           format: int64
-        cachedTokens:
+        cached_tokens:
           type: integer
           format: int64
-        completionTokens:
+        completion_tokens:
           type: integer
           format: int64
-        costUsd:
+        cost_usd:
           type: number
           format: double
     EvictionEvent:
       type: object
       properties:
-        atMs:
+        created_at:
           type: integer
           format: int64
-        victimClient:
+          description: When DEALER decided the eviction, in Unix seconds
+          example: 1795547093
+        victim_client:
           type: string
-        victimSession:
+        victim_session:
           type: string
-        server:
+        deck_server:
           type: string
-        profileId:
+          description: The DECK server the victim's lease was on
+          example: stub
+        profile_id:
           type: string
-        byClient:
+        by_client:
           type: string
         reason:
           type: string
@@ -250,8 +268,8 @@ components:
           type: string
         url:
           type: string
-        egress:
-          type: string
+        server_type:
+          $ref: '#/components/schemas/ServerType'
         reachable:
           type: boolean
         profiles:

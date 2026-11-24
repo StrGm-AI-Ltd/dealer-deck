@@ -70,7 +70,7 @@ curl -s -H "Authorization: Bearer ${DEALER_METRICS_KEY:-metrics-key}" "$DEALER/m
 import sys, json
 s = json.load(sys.stdin)
 for e in s["evictions"]:
-    print("evicted %s from %s/%s: %s" % (e["victimClient"], e["server"], e["profileId"], e["reason"]))
+    print("evicted %s from %s/%s: %s" % (e["victim_client"], e["deck_server"], e["profile_id"], e["reason"]))
 for x in s["sessions"]:
-    print("%-8s %-6s on %s/%s: %d requests, %d+%d tokens, $%.6f" % (x["client"], x["sessionId"], x.get("server") or "-",
-          x.get("profileId") or "-", x["requests"], x["promptTokens"], x["completionTokens"], x["costUsd"]))'
+    print("%-8s %-6s on %s/%s: %d requests, %d+%d tokens, $%.6f" % (x["client"], x["session_id"], x.get("deck_server") or "-",
+          x.get("profile_id") or "-", x["requests"], x["prompt_tokens"], x["completion_tokens"], x["cost_usd"]))'

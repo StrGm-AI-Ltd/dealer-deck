@@ -27,3 +27,6 @@ deck:
         output-per-m-tok: 0.30
         # The instance budget: at most this many sessions on this model at once (D106). Omit for unbounded.
         max-leases: 2
+        # How the weights are stored, as Nebius's model catalogue (/v1/models?verbose=true) reports it
+        quantization: fp8
+        bits-per-weight: 8

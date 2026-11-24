@@ -51,6 +51,7 @@ def generated = []
             modelPackage.set("ai.strgm.${name}.api.model")
             invokerPackage.set("ai.strgm.${name}.api")
             validateSpec.set(true)
+            cleanupOutput.set(true)   // a renamed or removed schema must not leave its old class behind in the jar
             if (kind == 'server') {
                 configOptions.set(common + [interfaceOnly: 'true', skipDefaultInterface: 'true', configPackage: "ai.strgm.${name}.api.config".toString()])
             } else {
