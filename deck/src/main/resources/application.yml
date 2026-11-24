@@ -25,3 +25,5 @@ deck:
         input-per-m-tok: 0.13
         cached-input-per-m-tok: 0.13
         output-per-m-tok: 0.40
+        # The instance budget: at most this many sessions on this model at once (D106). Omit for unbounded.
+        max-leases: 2

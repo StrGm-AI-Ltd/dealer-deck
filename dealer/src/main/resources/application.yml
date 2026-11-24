@@ -1,0 +1,47 @@
+server:
+  port: 8080
+spring:
+  application:
+    name: dealer
+  threads:
+    virtual:
+      enabled: true
+  mvc:
+    async:
+      request-timeout: 10m
+springdoc:
+  swagger-ui:
+    url: /openapi/dealer.yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+dealer:
+  metrics-key: ${DEALER_METRICS_KEY:metrics-key}
+  timers:
+    min-lease-seconds: 15
+    idle-seconds: 10
+  clients:
+    - name: agent-a
+      key: key-agent-a
+      priority: 50
+      external-routing: true
+    - name: agent-b
+      key: key-agent-b
+      priority: 50
+      external-routing: false
+    - name: vip
+      key: key-vip
+      priority: 80
+      external-routing: false
+  servers:
+    - name: stub
+      url: http://localhost:8081
+      egress: local
+      key: ${DECK_STUB_KEY:deck-key-stub}
+    - name: nebius
+      url: http://localhost:8082
+      egress: external
+      key: ${DECK_NEBIUS_KEY:deck-key-nebius}
+      provider-credential-env: NEBIUS_API_KEY

@@ -76,6 +76,7 @@ public class StubBackend implements DeckBackend {
                 isLoaded ? Readiness.LOADED : Readiness.COLD)
                 .limitations(DEFS.stream().filter(o -> o != d && overlaps(o, d)).map(Def::id).toList())
                 .prices(new Prices().inputPerMTok(0.0).cachedInputPerMTok(0.0).outputPerMTok(0.0))
+                .maxLeases(1).activeLeases((int) leases.values().stream().filter(l -> l.active() && l.profileId.equals(d.id())).count())
                 .timeToFirstTokenMs((int) scaled(d.ttftMs())).decodeTokensPerSecond(d.decodeTps() / props.timeFactor());
         if (!isLoaded) {
             p.etaSeconds(scaled(d.loadMs()) / 1000.0);

@@ -8,6 +8,7 @@ public record DeckProperties(String serverName, String apiKey, double timeFactor
 
     public record Nebius(String baseUrl, List<NebiusModel> models) {}
 
+    /** {@code maxLeases}: the model's instance budget (null = unbounded), e.g. to cap an expensive model (D106). */
     public record NebiusModel(String model, int contextWindow, double inputPerMTok, double cachedInputPerMTok,
-            double outputPerMTok) {}
+            double outputPerMTok, Integer maxLeases) {}
 }

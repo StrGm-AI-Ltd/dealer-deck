@@ -258,6 +258,14 @@ components:
             type: string
         prices:
           $ref: '#/components/schemas/Prices'
+        maxLeases:
+          type: integer
+          description: >-
+            The profile's instance budget: how many leases it allows at once. Absent means unbounded.
+            External servers can set it per model, e.g. to cap the use of an expensive model (D106).
+            Over budget, POST /leases answers 409 with the leases in the way, so DEALER can queue or evict.
+        activeLeases:
+          type: integer
         timeToFirstTokenMs:
           type: integer
         decodeTokensPerSecond:

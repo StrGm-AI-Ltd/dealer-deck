@@ -59,6 +59,7 @@ public class NebiusBackend implements DeckBackend {
         return props.nebius().models().stream()
                 .map(m -> new ai.strgm.deck.api.model.Profile(PREFIX + m.model(), PREFIX + m.model(), m.contextWindow(),
                         Readiness.LOADED).provider("nebius").limitations(List.of())
+                        .maxLeases(m.maxLeases()).activeLeases(active(PREFIX + m.model()).size())
                         .prices(new Prices().inputPerMTok(m.inputPerMTok()).cachedInputPerMTok(m.cachedInputPerMTok())
                                 .outputPerMTok(m.outputPerMTok())))
                 .toList();
@@ -69,9 +70,20 @@ public class NebiusBackend implements DeckBackend {
         return new Catalogue(props.serverName(), Implementation.EXTERNAL, profiles());
     }
 
+    private List<String> active(final String profileId) {
+        synchronized (leases) {
+            return leases.values().stream().filter(l -> l.active() && l.profileId.equals(profileId)).map(l -> l.id).toList();
+        }
+    }
+
     @Override
-    public Lease acquire(final String profileId, final String sessionRef) {
-        model(profileId);
+    public synchronized Lease acquire(final String profileId, final String sessionRef) {
+        final var m = model(profileId);
+        final var active = active(profileId);
+        if (m.maxLeases() != null && active.size() >= m.maxLeases()) {
+            throw new ApiException(HttpStatus.CONFLICT, "lease_conflict",
+                    "The instance budget of " + profileId + " (" + m.maxLeases() + ") is in use", active);
+        }
         final var lease = new LeaseRecord(profileId, sessionRef, LeaseState.READY);
         leases.put(lease.id, lease);
         return lease.toApi();
