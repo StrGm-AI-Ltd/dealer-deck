@@ -13,7 +13,7 @@ v0.5 was built at a hackathon. The local DECK server is a **simulated stub**; th
 ## How DEALER + DECK uses Nebius Token Factory
 
 - **Nebius Token Factory is the provider behind the external DECK server** (`deck` module, `external`
-  profile). It serves `nebius/…` profiles, here `nebius/meta-llama/Llama-3.3-70B-Instruct` with a 131k
+  profile). It serves `nebius/…` profiles, here `nebius/Qwen/Qwen3-30B-A3B-Instruct-2507` with a 262k
   context window, through Nebius's OpenAI-compatible API (`https://api.tokenfactory.nebius.com/v1/`).
 - **It's the overflow capacity behind local hardware.** In the demo, when a priority-80 client needs the
   local hardware, DEALER evicts two priority-50 agents. Agent A, whose client allows external routing, is

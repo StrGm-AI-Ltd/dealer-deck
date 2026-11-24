@@ -112,12 +112,15 @@ public class ChatController {
                     if (line.startsWith("data:")) {
                         final var data = line.substring(5).trim();
                         if (data.startsWith("{")) {
-                            final var usage = mapper.readTree(data).path("usage");
+                            final var chunk = mapper.readTree(data);
+                            final var usage = chunk.path("usage");
                             if (usage.isObject()) {
                                 prompt = number(usage.path("prompt_tokens"));
                                 cached = number(usage.path("prompt_tokens_details").path("cached_tokens"));
                                 completion = number(usage.path("completion_tokens"));
-                                if (!clientWantsUsage) {
+                                // Nebius attaches usage to every chunk: only a usage-only chunk (no choices) is the
+                                // one the client didn't ask for, so a chunk that carries text is always forwarded
+                                if (!clientWantsUsage && chunk.path("choices").isEmpty()) {
                                     skipBlank = true;
                                     continue;
                                 }
