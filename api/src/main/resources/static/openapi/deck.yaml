@@ -48,7 +48,7 @@ paths:
     get:
       tags: [Leases]
       operationId: listLeases
-      summary: The active leases, optionally only those on one profile
+      summary: The active leases, optionally only those on one profile or of one session
       description: >-
         For choosing a lease to evict. Lists only `loading` and `ready` leases, oldest first. To free capacity
         for a profile, look at the leases on the profiles whose `limitations.leaseReductions` name it, as well
@@ -63,23 +63,32 @@ paths:
           schema:
             type: string
           example: small-a
+        - name: sessionRef
+          in: query
+          required: false
+          description: >-
+            Only the leases of this session, as `POST /leases` received it (DEALER sends `<client>/<session id>`).
+            A filter like `profileId`: a session without an active lease matches nothing, so the list is empty.
+            With both filters, a lease must match both.
+          schema:
+            type: string
+          example: agent-a/a-1
       responses:
         '200':
           description: The active leases, possibly none
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Lease'
+                $ref: '#/components/schemas/Leases'
               example:
-                - id: lease-24af55a1
-                  profileId: small-a
-                  state: ready
-                  createdAtMs: 1795545070814
-                  readyAtMs: 1795545070814
-                  sessionRef: agent-a/a-1
-                  usage: {cachedTokens: 0, completionTokens: 0, estimated: false, promptTokens: 0}
+                leases:
+                  - id: lease-24af55a1
+                    profileId: small-a
+                    state: ready
+                    createdAtMs: 1795545070814
+                    readyAtMs: 1795545070814
+                    sessionRef: agent-a/a-1
+                    usage: {cachedTokens: 0, completionTokens: 0, estimated: false, promptTokens: 0}
         '401':
           $ref: '#/components/responses/Unauthorized'
     post:
@@ -784,6 +793,15 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ModelProfile'
+    Leases:
+      type: object
+      description: A list of leases, in an object so that fields such as paging can be added later
+      required: [leases]
+      properties:
+        leases:
+          type: array
+          items:
+            $ref: '#/components/schemas/Lease'
     LeaseRequest:
       type: object
       required: [profileId, sessionRef]

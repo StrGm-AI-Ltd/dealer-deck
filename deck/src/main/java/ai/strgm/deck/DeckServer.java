@@ -19,8 +19,8 @@ public interface DeckServer {
 
     Lease get(String leaseId);
 
-    /** The active leases, oldest first; only those on {@code profileId} unless it's null. */
-    List<Lease> leases(String profileId);
+    /** The active leases, oldest first; only those on {@code profileId} and of {@code sessionRef}, if given. */
+    List<Lease> leases(String profileId, String sessionRef);
 
     void release(String leaseId);
 

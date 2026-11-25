@@ -71,10 +71,12 @@ public abstract class AbstractDeckServer implements DeckServer {
     }
 
     @Override
-    public synchronized List<Lease> leases(final String profileId) {
+    public synchronized List<Lease> leases(final String profileId, final String sessionRef) {
         synchronized (leases) {
             return leases.values().stream().filter(LeaseRecord::active)
-                    .filter(l -> profileId == null || l.profileId.equals(profileId)).map(LeaseRecord::toApi).toList();
+                    .filter(l -> profileId == null || l.profileId.equals(profileId))
+                    .filter(l -> sessionRef == null || sessionRef.equals(l.sessionRef))
+                    .map(LeaseRecord::toApi).toList();
         }
     }
 
