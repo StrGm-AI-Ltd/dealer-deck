@@ -3,11 +3,11 @@ package ai.strgm.deck;
 import ai.strgm.deck.api.model.DeckState;
 import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseRequest;
+import ai.strgm.deck.api.model.Leases;
 import ai.strgm.deck.api.model.ModelProfiles;
 import ai.strgm.deck.api.server.LeasesApi;
 import ai.strgm.deck.api.server.MetricsApi;
 import ai.strgm.deck.api.server.ModelProfilesApi;
-import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
@@ -32,8 +32,8 @@ public class DeckApiController implements ModelProfilesApi, LeasesApi, MetricsAp
     }
 
     @Override
-    public ResponseEntity<List<Lease>> listLeases(final String profileId) {
-        return ResponseEntity.ok(server.leases(profileId));
+    public ResponseEntity<Leases> listLeases(final String profileId, final String sessionRef) {
+        return ResponseEntity.ok(new Leases(server.leases(profileId, sessionRef)));
     }
 
     @Override
