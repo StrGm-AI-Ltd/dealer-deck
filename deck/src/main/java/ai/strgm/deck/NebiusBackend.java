@@ -103,9 +103,6 @@ public class NebiusBackend implements DeckBackend {
 
     @Override
     public List<Lease> leases(final String profileId) {
-        if (profileId != null) {
-            model(profileId);   // 404 for an unknown profile
-        }
         synchronized (leases) {
             return leases.values().stream().filter(LeaseRecord::active)
                     .filter(l -> profileId == null || l.profileId.equals(profileId)).map(LeaseRecord::toApi).toList();

@@ -57,13 +57,15 @@ paths:
         - name: profileId
           in: query
           required: false
-          description: Only the leases on this profile
+          description: >-
+            Only the leases on this profile. A filter, not a reference: a profile id this server doesn't serve
+            matches no leases, so the list is empty.
           schema:
             type: string
           example: small-a
       responses:
         '200':
-          description: The active leases
+          description: The active leases, possibly none
           content:
             application/json:
               schema:
@@ -80,8 +82,6 @@ paths:
                   usage: {cachedTokens: 0, completionTokens: 0, estimated: false, promptTokens: 0}
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/UnknownProfile'
     post:
       tags: [Leases]
       operationId: acquireLease
