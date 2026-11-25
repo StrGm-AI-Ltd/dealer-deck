@@ -1,0 +1,11 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot'
+    id 'io.spring.dependency-management'
+}
+
+dependencies {
+    implementation project(':deck')
+}
+
+bootJar { archiveFileName = 'deck-openai.jar' }

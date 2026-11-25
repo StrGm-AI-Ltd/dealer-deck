@@ -1,0 +1,16 @@
+# What every DECK server shares. Each server's application.yml imports this file.
+spring:
+  threads:
+    virtual:
+      enabled: true
+  mvc:
+    async:
+      request-timeout: 10m
+springdoc:
+  swagger-ui:
+    url: /openapi/deck.yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

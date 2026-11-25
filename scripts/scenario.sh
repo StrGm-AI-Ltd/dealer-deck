@@ -6,11 +6,14 @@
 #    so DEALER evicts both agents between requests and reserves the capacity for vip.
 #  - agent-a is re-placed on Nebius Token Factory; agent-b may not leave local hardware, so it waits.
 #  - vip stops; after its lease idles out, agent-b resumes on the stub.
+# VIP_MODEL is the model vip asks for: `large` (the stub's) by default; against a local oMLX DECK server, its
+# model, e.g. omlx/Qwen3.8-27B-graft.
 set -u
 DEALER=${DEALER_URL:-http://localhost:8080}
 DURATION=${DURATION:-80}
 VIP_AT=${VIP_AT:-20}
 THINK=${THINK:-2}
+VIP_MODEL=${VIP_MODEL:-large}
 
 PROMPTS=(
   "In two sentences, when should I prefer composition over inheritance?"
@@ -53,16 +56,16 @@ agent() { # name key session seconds
   done
 }
 
-echo "DEALER demo: agent-a and agent-b on auto-32k; vip asks for 'large' at +${VIP_AT}s. Watch the DEALER UI."
+echo "DEALER demo: agent-a and agent-b on auto-32k; vip asks for '$VIP_MODEL' at +${VIP_AT}s. Watch the DEALER UI."
 agent agent-a key-agent-a a-1 "$DURATION" &
 A=$!
 sleep 0.3
 agent agent-b key-agent-b b-1 "$DURATION" &
 B=$!
 sleep "$VIP_AT"
-echo "------ vip (priority 80, local only) asks for 'large': DEALER evicts both agents between requests ------"
-ask vip key-vip vip-1 large "Summarise the design of a priority scheduler in two sentences."
-ask vip key-vip vip-1 large "Name one risk of eviction in one sentence."
+echo "------ vip (priority 80, local only) asks for '$VIP_MODEL': DEALER evicts both agents between requests ------"
+ask vip key-vip vip-1 "$VIP_MODEL" "Summarise the design of a priority scheduler in two sentences."
+ask vip key-vip vip-1 "$VIP_MODEL" "Name one risk of eviction in one sentence."
 echo "------ vip is done; its lease idles out after the idle timeout, then agent-b resumes on the stub ------"
 wait $A $B
 echo "------ evictions and per-session usage ------"
@@ -70,7 +73,7 @@ curl -s -H "Authorization: Bearer ${DEALER_METRICS_KEY:-metrics-key}" "$DEALER/m
 import sys, json
 s = json.load(sys.stdin)
 for e in s["evictions"]:
-    print("evicted %s from %s/%s: %s" % (e["victimClient"], e["server"], e["profileId"], e["reason"]))
+    print("evicted %s from %s/%s: %s" % (e["victim_client"], e["deck_server"], e["profile_id"], e["reason"]))
 for x in s["sessions"]:
-    print("%-8s %-6s on %s/%s: %d requests, %d+%d tokens, $%.6f" % (x["client"], x["sessionId"], x.get("server") or "-",
-          x.get("profileId") or "-", x["requests"], x["promptTokens"], x["completionTokens"], x["costUsd"]))'
+    print("%-8s %-6s on %s/%s: %d requests, %d+%d tokens, $%.6f" % (x["client"], x["session_id"], x.get("deck_server") or "-",
+          x.get("profile_id") or "-", x["requests"], x["prompt_tokens"], x["completion_tokens"], x["cost_usd"]))'

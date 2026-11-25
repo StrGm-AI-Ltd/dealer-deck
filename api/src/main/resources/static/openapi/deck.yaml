@@ -3,11 +3,11 @@ info:
   title: DECK API
   version: 0.5.0
   description: >-
-    One interface for every DECK server, local or external (D105). A DECK server publishes a
-    capacity-aware catalogue of serving profiles and grants leases on them; DEALER routes and evicts
+    One interface for every DECK server, local or external (D105). A DECK server publishes its
+    capacity-aware model profiles and grants leases on them; DEALER routes and evicts
     in profile and lease terms only, without knowing the hardware (D18, D74).
-    In v0.5 there are two implementations: the external server backed by Nebius Token Factory, and
-    a local stub that simulates two workers. Every endpoint requires DEALER's DECK key (D104).
+    In v0.5 there are two implementations: a server backed by an OpenAI-compatible provider (Nebius Token
+    Factory, or a local server such as oMLX), and a local stub that simulates two workers. Every endpoint requires DEALER's DECK key (D104).
 servers:
   - url: http://localhost:8081
     description: DECK stub
@@ -16,8 +16,8 @@ servers:
 security:
   - bearerAuth: []
 tags:
-  - name: Catalogue
-    description: Serving profiles, readiness and limitations
+  - name: Model profiles
+    description: Serving profiles, with their readiness, quantization, limitations and speeds
   - name: Leases
     description: Exclusive use of a profile by one session
   - name: Chat
@@ -25,21 +25,63 @@ tags:
   - name: Metrics
     description: Observability of this DECK server
 paths:
-  /catalogue:
+  /model-profiles:
     get:
-      tags: [Catalogue]
-      operationId: getCatalogue
+      tags: [Model profiles]
+      operationId: getModelProfiles
       summary: The serving profiles this server offers
       responses:
         '200':
-          description: The catalogue
+          description: The model profiles
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Catalogue'
+                $ref: '#/components/schemas/ModelProfiles'
+              examples:
+                stub:
+                  $ref: '#/components/examples/StubModelProfiles'
+                external:
+                  $ref: '#/components/examples/ExternalModelProfiles'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /leases:
+    get:
+      tags: [Leases]
+      operationId: listLeases
+      summary: The active leases, optionally only those on one profile
+      description: >-
+        For choosing a lease to evict. Lists only `loading` and `ready` leases, oldest first. To free capacity
+        for a profile, look at the leases on the profiles whose `limitations.leaseReductions` name it, as well
+        as at the leases on the profile itself.
+      parameters:
+        - name: profileId
+          in: query
+          required: false
+          description: >-
+            Only the leases on this profile. A filter, not a reference: a profile id this server doesn't serve
+            matches no leases, so the list is empty.
+          schema:
+            type: string
+          example: small-a
+      responses:
+        '200':
+          description: The active leases, possibly none
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Lease'
+              example:
+                - id: lease-24af55a1
+                  profileId: small-a
+                  state: ready
+                  createdAtMs: 1795545070814
+                  readyAtMs: 1795545070814
+                  sessionRef: agent-a/a-1
+                  usage: {cachedTokens: 0, completionTokens: 0, estimated: false, promptTokens: 0}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
     post:
       tags: [Leases]
       operationId: acquireLease
@@ -57,16 +99,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Lease'
+              examples:
+                ready:
+                  $ref: '#/components/examples/LeaseReady'
+                loading:
+                  $ref: '#/components/examples/LeaseLoading'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/UnknownProfile'
         '409':
           description: The profile can't be leased now. `blockers` lists the leases in the way.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/LeaseConflict'
+              examples:
+                blocked:
+                  $ref: '#/components/examples/LeaseBlocked'
+                budget:
+                  $ref: '#/components/examples/LeaseBudgetInUse'
   /leases/{leaseId}:
     parameters:
       - $ref: '#/components/parameters/LeaseId'
@@ -81,10 +133,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Lease'
+              examples:
+                withUsage:
+                  $ref: '#/components/examples/LeaseWithUsage'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/UnknownLease'
     delete:
       tags: [Leases]
       operationId: releaseLease
@@ -95,7 +150,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/UnknownLease'
   /leases/{leaseId}/evict:
     parameters:
       - $ref: '#/components/parameters/LeaseId'
@@ -110,10 +165,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Lease'
+              example:
+                id: lease-24af55a1
+                profileId: small-a
+                state: evicted
+                createdAtMs: 1795545070814
+                readyAtMs: 1795545070814
+                sessionRef: agent-a/a-1
+                usage: {cachedTokens: 0, completionTokens: 3, estimated: false, promptTokens: 10}
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/UnknownLease'
   /v1/chat/completions:
     post:
       tags: [Chat]
@@ -121,14 +184,17 @@ paths:
       summary: OpenAI-compatible streaming chat completion on a leased profile
       description: >-
         Streaming only. The response is a server-sent event stream of `ChatCompletionChunk`
-        objects ending with `data: [DONE]`. An external server forwards `X-Provider-Authorization`
-        to its provider as `Authorization`; in v0.5 DECK stores no provider credentials (D104).
+        objects ending with `data: [DONE]`. The leased profile decides the model: the stub ignores the
+        request's `model`, and an external server replaces it with the profile's model. An external server
+        forwards `X-Provider-Authorization` to its provider as `Authorization`; in v0.5 DECK stores no
+        provider credentials (D104).
       parameters:
         - name: X-Lease-Id
           in: header
           required: true
           schema:
             type: string
+          example: lease-24af55a1
         - name: X-Provider-Authorization
           in: header
           required: false
@@ -141,25 +207,114 @@ paths:
           application/json:
             schema:
               $ref: 'common.yaml#/components/schemas/ChatCompletionRequest'
+            example:
+              model: small-a
+              stream: true
+              max_tokens: 3
+              stream_options:
+                include_usage: true
+              messages:
+                - role: user
+                  content: Explain virtual threads in one paragraph.
       responses:
         '200':
-          description: The streamed completion
+          description: The streamed completion. With `stream_options.include_usage`, the last chunk carries `usage`.
           content:
             text/event-stream:
               schema:
                 $ref: 'common.yaml#/components/schemas/ChatCompletionChunk'
+              example: |
+                data: {"id":"chatcmpl-lease-24af55a1","object":"chat.completion.chunk","created":1795545071,"model":"stub/small-a","choices":[{"index":0,"delta":{"role":"assistant","content":"Here "},"finish_reason":null}]}
+
+                data: {"id":"chatcmpl-lease-24af55a1","object":"chat.completion.chunk","created":1795545071,"model":"stub/small-a","choices":[{"index":0,"delta":{"content":"is "},"finish_reason":null}]}
+
+                data: {"id":"chatcmpl-lease-24af55a1","object":"chat.completion.chunk","created":1795545071,"model":"stub/small-a","choices":[{"index":0,"delta":{"content":"a "},"finish_reason":null}]}
+
+                data: {"id":"chatcmpl-lease-24af55a1","object":"chat.completion.chunk","created":1795545071,"model":"stub/small-a","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+                data: {"id":"chatcmpl-lease-24af55a1","object":"chat.completion.chunk","created":1795545071,"model":"stub/small-a","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13,"prompt_tokens_details":{"cached_tokens":0}}}
+
+                data: [DONE]
         '400':
-          $ref: '#/components/responses/Error'
+          description: An invalid request, or one the provider rejected
+          content:
+            application/json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/ErrorResponse'
+              examples:
+                streamingOnly:
+                  $ref: '#/components/examples/StreamingOnly'
+                missingLease:
+                  $ref: '#/components/examples/MissingLeaseHeader'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          description: >-
+            Missing or invalid DECK key, or (external servers) a missing provider credential or one the provider
+            rejected, in which case the provider's own error body is passed through
+          content:
+            application/json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/ErrorResponse'
+              examples:
+                deckKey:
+                  $ref: '#/components/examples/MissingDeckKey'
+                providerCredential:
+                  $ref: '#/components/examples/MissingProviderCredential'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/UnknownLease'
         '409':
-          $ref: '#/components/responses/Error'
+          description: The lease is no longer active
+          content:
+            application/json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/ErrorResponse'
+              example:
+                error: {message: Lease lease-24af55a1 is evicted, type: lease_inactive, code: null, param: null}
         '429':
-          $ref: '#/components/responses/Error'
+          description: >-
+            The provider's rate limit (external servers). The provider's own error body is passed through; this
+            is the body DECK sends when the provider sent none.
+          headers:
+            Retry-After:
+              description: Passed through from the provider when it sends one
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/ErrorResponse'
+              example:
+                error: {message: Provider nebius error 429, type: upstream_error}
+        '502':
+          description: The provider's error response couldn't be read (external servers)
+          content:
+            application/json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/ErrorResponse'
+              example:
+                error: {message: Provider nebius error 500, type: upstream_error, code: null, param: null}
         '503':
-          $ref: '#/components/responses/Error'
+          description: >-
+            Any other provider error (external servers). The provider's own error body is passed through; this
+            is the body DECK sends when the provider sent none.
+          headers:
+            Retry-After:
+              description: Passed through from the provider when it sends one
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/ErrorResponse'
+              example:
+                error: {message: Provider nebius error 500, type: upstream_error}
+        '504':
+          description: The provider couldn't be reached (external servers)
+          content:
+            application/json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/ErrorResponse'
+              example:
+                error: {message: 'Provider nebius unreachable: request timed out', type: upstream_error, code: null, param: null}
   /metrics/state:
     get:
       tags: [Metrics]
@@ -172,6 +327,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeckState'
+              examples:
+                stub:
+                  $ref: '#/components/examples/StubState'
+                external:
+                  $ref: '#/components/examples/ExternalState'
         '401':
           $ref: '#/components/responses/Unauthorized'
 components:
@@ -187,49 +347,371 @@ components:
       required: true
       schema:
         type: string
+      example: lease-24af55a1
   responses:
-    Error:
-      description: OpenAI-style error
-      content:
-        application/json:
-          schema:
-            $ref: 'common.yaml#/components/schemas/ErrorResponse'
     Unauthorized:
       description: Missing or invalid DECK key
       content:
         application/json:
           schema:
             $ref: 'common.yaml#/components/schemas/ErrorResponse'
-    NotFound:
-      description: Unknown profile or lease
+          examples:
+            deckKey:
+              $ref: '#/components/examples/MissingDeckKey'
+    UnknownProfile:
+      description: Unknown profile
       content:
         application/json:
           schema:
             $ref: 'common.yaml#/components/schemas/ErrorResponse'
+          example:
+            error: {message: 'Unknown profile: huge', type: not_found, code: null, param: null}
+    UnknownLease:
+      description: Unknown lease
+      content:
+        application/json:
+          schema:
+            $ref: 'common.yaml#/components/schemas/ErrorResponse'
+          example:
+            error: {message: 'Unknown lease: lease-00000000', type: not_found, code: null, param: null}
+  examples:
+    LeaseBlocked:
+      summary: Stub, the hardware is in use
+      value:
+        error: {message: Profile large is blocked by active leases, type: lease_conflict, code: null, param: null}
+        blockers: [lease-24af55a1]
+    LeaseBudgetInUse:
+      summary: External, the instance budget is in use
+      value:
+        error:
+          message: The instance budget of nebius/Qwen/Qwen3-30B-A3B-Instruct-2507 (2) is in use
+          type: lease_conflict
+          code: null
+          param: null
+        blockers: [lease-5b292842, lease-0c1d7e93]
+    StreamingOnly:
+      summary: '"stream" is not true'
+      value:
+        error: {message: 'Streaming only: set "stream": true', type: invalid_request_error, code: null, param: null}
+    MissingLeaseHeader:
+      summary: No X-Lease-Id header
+      value:
+        error: {message: Missing required header X-Lease-Id, type: invalid_request_error, code: null, param: null}
+    MissingProviderCredential:
+      summary: External server, no X-Provider-Authorization
+      value:
+        error:
+          message: >-
+            Missing X-Provider-Authorization: this DECK server forwards the provider credential it receives
+            (D104)
+          type: authentication_error
+          code: null
+          param: null
+    MissingDeckKey:
+      summary: No or wrong DECK key
+      value:
+        error: {message: Missing or invalid DECK key, type: authentication_error}
+    LeaseReady:
+      summary: On a loaded profile
+      value:
+        id: lease-24af55a1
+        profileId: small-a
+        state: ready
+        createdAtMs: 1795545070814
+        readyAtMs: 1795545070814
+        sessionRef: agent-a/a-1
+        usage: {cachedTokens: 0, completionTokens: 0, estimated: false, promptTokens: 0}
+    LeaseLoading:
+      summary: On an unloaded profile
+      value:
+        id: lease-4db196a3
+        profileId: large
+        state: loading
+        createdAtMs: 1795545368951
+        readyAtMs: null
+        sessionRef: vip/vip-1
+        usage: {cachedTokens: 0, completionTokens: 0, estimated: false, promptTokens: 0}
+    LeaseWithUsage:
+      summary: After one request
+      value:
+        id: lease-24af55a1
+        profileId: small-a
+        state: ready
+        createdAtMs: 1795545070814
+        readyAtMs: 1795545070814
+        sessionRef: agent-a/a-1
+        usage: {cachedTokens: 0, completionTokens: 3, estimated: false, promptTokens: 10}
+    StubModelProfiles:
+      summary: Stub, nothing leased
+      value:
+        server: stub
+        implementation: stub
+        profiles:
+          - id: small-a
+            model: stub/small-a
+            contextWindow: 32768
+            quantization: {format: q4_k_m, bitsPerWeight: 4.0}
+            readiness: loaded
+            activeLeases: 0
+            limitations:
+              leaseReductions: [{profileId: large, leases: 1}]
+            loadingTimeMs: 3000
+            maxLeases: 1
+            prices: {cachedInputPerMTok: 0.0, inputPerMTok: 0.0, outputPerMTok: 0.0}
+            provider: null
+            speeds:
+              - {contextTokens: 4096, prefillTokensPerSecond: 800.0, decodeTokensPerSecond: 40.0}
+              - {contextTokens: 16384, prefillTokensPerSecond: 600.0, decodeTokensPerSecond: 34.0}
+              - {contextTokens: 32768, prefillTokensPerSecond: 450.0, decodeTokensPerSecond: 28.0}
+          - id: small-b
+            model: stub/small-b
+            contextWindow: 32768
+            quantization: {format: q4_k_m, bitsPerWeight: 4.0}
+            readiness: loaded
+            activeLeases: 0
+            limitations:
+              leaseReductions: [{profileId: large, leases: 1}]
+            loadingTimeMs: 3000
+            maxLeases: 1
+            prices: {cachedInputPerMTok: 0.0, inputPerMTok: 0.0, outputPerMTok: 0.0}
+            provider: null
+            speeds:
+              - {contextTokens: 4096, prefillTokensPerSecond: 800.0, decodeTokensPerSecond: 40.0}
+              - {contextTokens: 16384, prefillTokensPerSecond: 600.0, decodeTokensPerSecond: 34.0}
+              - {contextTokens: 32768, prefillTokensPerSecond: 450.0, decodeTokensPerSecond: 28.0}
+          - id: large
+            model: stub/large
+            contextWindow: 131072
+            quantization: {format: q8_0, bitsPerWeight: 8.0}
+            readiness: unloaded
+            activeLeases: 0
+            limitations:
+              leaseReductions: [{profileId: small-a, leases: 1}, {profileId: small-b, leases: 1}]
+            loadingTimeMs: 6000
+            maxLeases: 1
+            prices: {cachedInputPerMTok: 0.0, inputPerMTok: 0.0, outputPerMTok: 0.0}
+            provider: null
+            speeds:
+              - {contextTokens: 4096, prefillTokensPerSecond: 400.0, decodeTokensPerSecond: 25.0}
+              - {contextTokens: 32768, prefillTokensPerSecond: 280.0, decodeTokensPerSecond: 20.0}
+              - {contextTokens: 131072, prefillTokensPerSecond: 150.0, decodeTokensPerSecond: 14.0}
+    ExternalModelProfiles:
+      summary: External (Nebius), nothing leased
+      value:
+        server: nebius
+        implementation: external
+        profiles:
+          - id: nebius/Qwen/Qwen3-30B-A3B-Instruct-2507
+            model: nebius/Qwen/Qwen3-30B-A3B-Instruct-2507
+            contextWindow: 262144
+            quantization: {format: fp8, bitsPerWeight: 8.0}
+            readiness: loaded
+            activeLeases: 0
+            limitations:
+              leaseReductions: []
+            loadingTimeMs: null
+            maxLeases: 2
+            prices: {cachedInputPerMTok: 0.1, inputPerMTok: 0.1, outputPerMTok: 0.3}
+            provider: nebius
+            speeds: []
+    StubState:
+      summary: Stub, agent-a's lease on small-a
+      value:
+        server: stub
+        implementation: stub
+        profiles:
+          - id: small-a
+            model: stub/small-a
+            contextWindow: 32768
+            quantization: {format: q4_k_m, bitsPerWeight: 4.0}
+            readiness: loaded
+            activeLeases: 1
+            limitations:
+              leaseReductions: [{profileId: large, leases: 1}]
+            loadingTimeMs: 3000
+            maxLeases: 1
+            prices: {cachedInputPerMTok: 0.0, inputPerMTok: 0.0, outputPerMTok: 0.0}
+            provider: null
+            speeds:
+              - {contextTokens: 4096, prefillTokensPerSecond: 800.0, decodeTokensPerSecond: 40.0}
+              - {contextTokens: 16384, prefillTokensPerSecond: 600.0, decodeTokensPerSecond: 34.0}
+              - {contextTokens: 32768, prefillTokensPerSecond: 450.0, decodeTokensPerSecond: 28.0}
+          - id: small-b
+            model: stub/small-b
+            contextWindow: 32768
+            quantization: {format: q4_k_m, bitsPerWeight: 4.0}
+            readiness: loaded
+            activeLeases: 0
+            limitations:
+              leaseReductions: [{profileId: large, leases: 1}]
+            loadingTimeMs: 3000
+            maxLeases: 1
+            prices: {cachedInputPerMTok: 0.0, inputPerMTok: 0.0, outputPerMTok: 0.0}
+            provider: null
+            speeds:
+              - {contextTokens: 4096, prefillTokensPerSecond: 800.0, decodeTokensPerSecond: 40.0}
+              - {contextTokens: 16384, prefillTokensPerSecond: 600.0, decodeTokensPerSecond: 34.0}
+              - {contextTokens: 32768, prefillTokensPerSecond: 450.0, decodeTokensPerSecond: 28.0}
+          - id: large
+            model: stub/large
+            contextWindow: 131072
+            quantization: {format: q8_0, bitsPerWeight: 8.0}
+            readiness: unloaded
+            activeLeases: 0
+            limitations:
+              leaseReductions: [{profileId: small-a, leases: 1}, {profileId: small-b, leases: 1}]
+            loadingTimeMs: 6000
+            maxLeases: 1
+            prices: {cachedInputPerMTok: 0.0, inputPerMTok: 0.0, outputPerMTok: 0.0}
+            provider: null
+            speeds:
+              - {contextTokens: 4096, prefillTokensPerSecond: 400.0, decodeTokensPerSecond: 25.0}
+              - {contextTokens: 32768, prefillTokensPerSecond: 280.0, decodeTokensPerSecond: 20.0}
+              - {contextTokens: 131072, prefillTokensPerSecond: 150.0, decodeTokensPerSecond: 14.0}
+        leases:
+          - id: lease-24af55a1
+            profileId: small-a
+            state: ready
+            createdAtMs: 1795545070814
+            readyAtMs: 1795545070814
+            sessionRef: agent-a/a-1
+            usage: {cachedTokens: 0, completionTokens: 3, estimated: false, promptTokens: 10}
+        provider: null
+        spendUsd: 0.0
+        workers:
+          - {id: w1, loadedProfile: small-a, state: leased}
+          - {id: w2, loadedProfile: small-b, state: idle}
+    ExternalState:
+      summary: External (Nebius), agent-a's lease
+      value:
+        server: nebius
+        implementation: external
+        profiles:
+          - id: nebius/Qwen/Qwen3-30B-A3B-Instruct-2507
+            model: nebius/Qwen/Qwen3-30B-A3B-Instruct-2507
+            contextWindow: 262144
+            quantization: {format: fp8, bitsPerWeight: 8.0}
+            readiness: loaded
+            activeLeases: 1
+            limitations:
+              leaseReductions: []
+            loadingTimeMs: null
+            maxLeases: 2
+            prices: {cachedInputPerMTok: 0.1, inputPerMTok: 0.1, outputPerMTok: 0.3}
+            provider: nebius
+            speeds: []
+        leases:
+          - id: lease-5b292842
+            profileId: nebius/Qwen/Qwen3-30B-A3B-Instruct-2507
+            state: ready
+            createdAtMs: 1795545071615
+            readyAtMs: 1795545071615
+            sessionRef: agent-a/a-1
+            usage: {cachedTokens: 0, completionTokens: 0, estimated: false, promptTokens: 0}
+        provider: nebius
+        spendUsd: 0.0
+        workers: []
   schemas:
     Implementation:
       type: string
-      enum: [stub, external]
+      description: >-
+        `stub`: the simulated local server. `external`: backed by a cloud provider. `local`: backed by a server on
+        the operator's own hardware, e.g. oMLX on a Mac.
+      enum: [stub, external, local]
     Readiness:
       type: string
-      enum: [loaded, cold, asleep, unavailable]
+      description: >-
+        `loaded`: a new lease is ready at once. `unloaded`: a new lease spends the profile's `loadingTimeMs`
+        in `loading` first.
+      enum: [loaded, unloaded]
     LeaseState:
       type: string
+      description: >-
+        `loading` until the profile is loaded, then `ready`. `released` (DEALER let it go) and `evicted` are
+        final.
       enum: [loading, ready, released, evicted]
+      example: ready
     Prices:
       type: object
-      description: USD per 1M tokens
+      description: USD per 1M tokens (0 on the stub)
       properties:
         inputPerMTok:
           type: number
           format: double
+          example: 0.1
         cachedInputPerMTok:
           type: number
           format: double
+          example: 0.1
         outputPerMTok:
           type: number
           format: double
-    Profile:
+          example: 0.3
+    LeaseReduction:
+      type: object
+      required: [profileId, leases]
+      properties:
+        profileId:
+          type: string
+          description: Another profile on the same server
+          example: large
+        leases:
+          type: integer
+          minimum: 1
+          description: How many fewer leases `profileId` can grant while one lease on this profile is active
+          example: 1
+    Limitations:
+      type: object
+      description: What a lease on this profile costs the server's other profiles
+      properties:
+        leaseReductions:
+          type: array
+          description: >-
+            The profiles that can grant fewer leases while one lease on this profile is active, e.g. because
+            they share its hardware. The leases a profile can still grant are its `maxLeases`, minus its
+            `activeLeases`, minus the reductions from active leases on other profiles, and never below zero.
+          items:
+            $ref: '#/components/schemas/LeaseReduction'
+    SpeedPoint:
+      type: object
+      description: The profile's speeds at one context size
+      required: [contextTokens, prefillTokensPerSecond, decodeTokensPerSecond]
+      properties:
+        contextTokens:
+          type: integer
+          description: Tokens in the context
+          example: 4096
+        prefillTokensPerSecond:
+          type: number
+          format: double
+          description: How fast the prompt is processed before the first token
+          example: 800
+        decodeTokensPerSecond:
+          type: number
+          format: double
+          description: How fast new tokens are generated
+          example: 40
+    Quantization:
+      type: object
+      description: >-
+        How the model's weights are stored, so DEALER can weigh quality against speed and cost when it plans a
+        route. Null on a profile whose server doesn't know it.
+      required: [format]
+      properties:
+        format:
+          type: string
+          description: >-
+            The format's name as the provider or runtime gives it, e.g. `bf16`, `fp8` or `fp4` (Nebius Token
+            Factory's names) or `q4_k_m` (a llama.cpp GGUF format)
+          example: fp8
+        bitsPerWeight:
+          type: number
+          format: double
+          description: >-
+            Nominal bits per weight, for comparing formats: e.g. 16 for `bf16`, 8 for `fp8`, 4 for `fp4` or
+            `q4_k_m`
+          example: 8
+    ModelProfile:
       type: object
       required: [id, model, contextWindow, readiness]
       properties:
@@ -241,21 +723,24 @@ components:
           example: stub/small-a
         provider:
           type: string
-          description: Set by external servers, e.g. `nebius`
+          description: The provider behind the server, e.g. `nebius` or `omlx`; null on the stub
+          example: nebius
         contextWindow:
           type: integer
           example: 32768
+        quantization:
+          $ref: '#/components/schemas/Quantization'
         readiness:
           $ref: '#/components/schemas/Readiness'
-        etaSeconds:
-          type: number
-          format: double
-          description: Time until the profile is ready, if it isn't loaded
+        loadingTimeMs:
+          type: integer
+          description: >-
+            How long a lease on this profile spends in `loading` when the profile is `unloaded`. Given whatever
+            the current readiness, so DEALER can weigh the cost of coming back to the profile later. Null when
+            the profile never needs loading, e.g. on external servers.
+          example: 3000
         limitations:
-          type: array
-          description: The profiles that become unavailable while this one is leased
-          items:
-            type: string
+          $ref: '#/components/schemas/Limitations'
         prices:
           $ref: '#/components/schemas/Prices'
         maxLeases:
@@ -264,67 +749,97 @@ components:
             The profile's instance budget: how many leases it allows at once. Absent means unbounded.
             External servers can set it per model, e.g. to cap the use of an expensive model (D106).
             Over budget, POST /leases answers 409 with the leases in the way, so DEALER can queue or evict.
+          example: 1
         activeLeases:
           type: integer
-        timeToFirstTokenMs:
-          type: integer
-        decodeTokensPerSecond:
-          type: number
-          format: double
-    Catalogue:
+          description: This profile's leases that are `loading` or `ready`
+          example: 0
+        speeds:
+          type: array
+          description: >-
+            Prefill and decode speeds at several context sizes, sorted by `contextTokens`. Between two points,
+            interpolate linearly. Empty when the server doesn't know them.
+          items:
+            $ref: '#/components/schemas/SpeedPoint'
+          example:
+            - contextTokens: 4096
+              prefillTokensPerSecond: 800
+              decodeTokensPerSecond: 40
+            - contextTokens: 16384
+              prefillTokensPerSecond: 600
+              decodeTokensPerSecond: 34
+            - contextTokens: 32768
+              prefillTokensPerSecond: 450
+              decodeTokensPerSecond: 28
+    ModelProfiles:
       type: object
       required: [server, implementation, profiles]
       properties:
         server:
           type: string
+          example: stub
         implementation:
           $ref: '#/components/schemas/Implementation'
         profiles:
           type: array
           items:
-            $ref: '#/components/schemas/Profile'
+            $ref: '#/components/schemas/ModelProfile'
     LeaseRequest:
       type: object
       required: [profileId, sessionRef]
       properties:
         profileId:
           type: string
+          example: small-a
         sessionRef:
           type: string
-          description: Opaque reference to DEALER's session
+          description: Opaque reference to DEALER's session; DEALER sends `<client>/<session id>`
+          example: agent-a/a-1
     Usage:
       type: object
       properties:
         promptTokens:
           type: integer
           format: int64
+          example: 10
         cachedTokens:
           type: integer
           format: int64
+          example: 0
         completionTokens:
           type: integer
           format: int64
+          example: 3
         estimated:
           type: boolean
           description: True if the provider sent no usage and the counts are estimates
+          example: false
     Lease:
       type: object
       required: [id, profileId, state]
       properties:
         id:
           type: string
+          example: lease-24af55a1
         profileId:
           type: string
+          example: small-a
         sessionRef:
           type: string
+          description: The `sessionRef` DEALER sent when acquiring the lease
+          example: agent-a/a-1
         state:
           $ref: '#/components/schemas/LeaseState'
         createdAtMs:
           type: integer
           format: int64
+          description: When the lease was granted, in Unix milliseconds
+          example: 1795545070814
         readyAtMs:
           type: integer
           format: int64
+          description: When the lease became `ready`, in Unix milliseconds; null while it's `loading`
+          example: 1795545070814
         usage:
           $ref: '#/components/schemas/Usage'
     LeaseConflict:
@@ -338,39 +853,51 @@ components:
           description: IDs of the leases that block this one
           items:
             type: string
+          example: [lease-24af55a1]
     Worker:
       type: object
       description: A simulated worker (stub only)
       properties:
         id:
           type: string
+          example: w1
         loadedProfile:
           type: string
+          description: The profile loaded on this worker; `loading <profile>` while one is being loaded
+          example: small-a
         state:
           type: string
-          example: busy
+          description: '`idle`, `leased` or `loading`'
+          example: leased
     DeckState:
       type: object
       required: [server, implementation, profiles, leases]
       properties:
         server:
           type: string
+          example: stub
         implementation:
           $ref: '#/components/schemas/Implementation'
         provider:
           type: string
+          description: The provider behind the server, e.g. `nebius` or `omlx`; null on the stub
+          example: nebius
         workers:
           type: array
+          description: The stub's simulated workers; empty on external servers
           items:
             $ref: '#/components/schemas/Worker'
         profiles:
           type: array
           items:
-            $ref: '#/components/schemas/Profile'
+            $ref: '#/components/schemas/ModelProfile'
         leases:
           type: array
+          description: The 30 most recent leases, in every state
           items:
             $ref: '#/components/schemas/Lease'
         spendUsd:
           type: number
           format: double
+          description: What all of this server's leases have cost so far at its profiles' prices, in USD; 0 on the stub
+          example: 0.0

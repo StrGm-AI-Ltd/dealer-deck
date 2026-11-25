@@ -4,7 +4,8 @@ import ai.strgm.dealer.api.model.ClientInfo;
 import ai.strgm.dealer.api.model.EvictionEvent;
 import ai.strgm.dealer.api.model.QueuedRequest;
 import ai.strgm.dealer.api.model.SessionInfo;
-import ai.strgm.deck.api.model.Profile;
+import ai.strgm.deck.api.model.ModelProfile;
+import ai.strgm.deck.api.model.Readiness;
 import ai.strgm.deck.api.model.Worker;
 import com.vaadin.flow.component.AttachEvent;
 import com.vaadin.flow.component.ClientCallable;
@@ -36,7 +37,7 @@ public class DashboardView extends VerticalLayout {
     private final Grid<SessionInfo> sessions = new Grid<>();
     private final Grid<EvictionEvent> evictions = new Grid<>();
     private final Grid<ClientInfo> clientGrid = new Grid<>();
-    private final Map<String, Grid<Profile>> profileGrids = new LinkedHashMap<>();
+    private final Map<String, Grid<ModelProfile>> profileGrids = new LinkedHashMap<>();
     private final Map<String, Grid<Worker>> workerGrids = new LinkedHashMap<>();
     private final Map<String, Span> deckStatus = new LinkedHashMap<>();
 
@@ -49,7 +50,7 @@ public class DashboardView extends VerticalLayout {
         sessions.addColumn(SessionInfo::getClient).setHeader("Client").setAutoWidth(true);
         sessions.addColumn(SessionInfo::getSessionId).setHeader("Session").setAutoWidth(true);
         sessions.addColumn(SessionInfo::getModel).setHeader("Model").setAutoWidth(true);
-        sessions.addColumn(s -> s.getServer() == null ? "-" : s.getServer() + " (" + s.getEgress() + ")").setHeader("DECK server").setAutoWidth(true);
+        sessions.addColumn(s -> s.getDeckServer() == null ? "-" : s.getDeckServer() + " (" + s.getServerType().getValue() + ")").setHeader("DECK server").setAutoWidth(true);
         sessions.addColumn(s -> s.getProfileId() == null ? "-" : s.getProfileId()).setHeader("Profile").setAutoWidth(true);
         sessions.addColumn(SessionInfo::getLeaseState).setHeader("Lease").setAutoWidth(true);
         sessions.addColumn(s -> seconds(s.getLeaseAgeMs())).setHeader("Lease age").setAutoWidth(true);
@@ -69,9 +70,9 @@ public class DashboardView extends VerticalLayout {
         queue.addColumn(q -> q.getReservedProfile() == null ? "-" : q.getReservedProfile()).setHeader("Reserved (draining)");
         queue.setAllRowsVisible(true);
 
-        evictions.addColumn(e -> TIME.format(Instant.ofEpochMilli(e.getAtMs()))).setHeader("Time").setAutoWidth(true);
+        evictions.addColumn(e -> TIME.format(Instant.ofEpochSecond(e.getCreatedAt()))).setHeader("Time").setAutoWidth(true);
         evictions.addColumn(e -> e.getVictimClient() + " / " + e.getVictimSession()).setHeader("Evicted").setAutoWidth(true);
-        evictions.addColumn(e -> e.getServer() + "/" + e.getProfileId()).setHeader("From").setAutoWidth(true);
+        evictions.addColumn(e -> e.getDeckServer() + "/" + e.getProfileId()).setHeader("From").setAutoWidth(true);
         evictions.addColumn(EvictionEvent::getByClient).setHeader("For").setAutoWidth(true);
         evictions.addColumn(EvictionEvent::getReason).setHeader("Why").setAutoWidth(true);
         evictions.setAllRowsVisible(true);
@@ -85,12 +86,16 @@ public class DashboardView extends VerticalLayout {
         final var decks = new HorizontalLayout();
         decks.setWidthFull();
         clients.decks.keySet().forEach(name -> {
-            final var profiles = new Grid<Profile>();
-            profiles.addColumn(Profile::getId).setHeader("Profile").setAutoWidth(true);
-            profiles.addColumn(p -> p.getReadiness().getValue() + (p.getEtaSeconds() == null ? "" : " (" + p.getEtaSeconds() + " s)")).setHeader("Readiness").setAutoWidth(true);
+            final var profiles = new Grid<ModelProfile>();
+            profiles.addColumn(ModelProfile::getId).setHeader("Profile").setAutoWidth(true);
+            profiles.addColumn(p -> p.getReadiness().getValue() + (p.getReadiness() != Readiness.UNLOADED || p.getLoadingTimeMs() == null
+                    ? "" : " (" + seconds(p.getLoadingTimeMs().longValue()) + " to load)")).setHeader("Readiness").setAutoWidth(true);
             profiles.addColumn(p -> (p.getActiveLeases() == null ? 0 : p.getActiveLeases()) + " / " + (p.getMaxLeases() == null ? "∞" : p.getMaxLeases())).setHeader("Leases / budget").setAutoWidth(true);
-            profiles.addColumn(Profile::getContextWindow).setHeader("Window").setAutoWidth(true);
-            profiles.addColumn(p -> p.getLimitations() == null || p.getLimitations().isEmpty() ? "-" : String.join(", ", p.getLimitations())).setHeader("Blocks").setAutoWidth(true);
+            profiles.addColumn(ModelProfile::getContextWindow).setHeader("Window").setAutoWidth(true);
+            profiles.addColumn(p -> p.getLimitations() == null || p.getLimitations().getLeaseReductions() == null
+                    || p.getLimitations().getLeaseReductions().isEmpty() ? "-"
+                    : String.join(", ", p.getLimitations().getLeaseReductions().stream()
+                            .map(r -> r.getProfileId() + " \u2212" + r.getLeases()).toList())).setHeader("Lease reductions").setAutoWidth(true);
             profiles.setAllRowsVisible(true);
             final var workers = new Grid<Worker>();
             workers.addColumn(Worker::getId).setHeader("Worker");

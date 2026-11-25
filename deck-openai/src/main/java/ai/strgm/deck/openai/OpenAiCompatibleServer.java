@@ -1,11 +1,19 @@
-package ai.strgm.deck;
+package ai.strgm.deck.openai;
 
-import ai.strgm.deck.api.model.Catalogue;
+import ai.strgm.deck.AbstractDeckServer;
+import ai.strgm.deck.ApiException;
+import ai.strgm.deck.DeckProperties;
+import ai.strgm.deck.Json;
+import ai.strgm.deck.LeaseRecord;
+import ai.strgm.deck.UpstreamException;
 import ai.strgm.deck.api.model.DeckState;
-import ai.strgm.deck.api.model.Implementation;
 import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseState;
+import ai.strgm.deck.api.model.Limitations;
+import ai.strgm.deck.api.model.ModelProfile;
+import ai.strgm.deck.api.model.ModelProfiles;
 import ai.strgm.deck.api.model.Prices;
+import ai.strgm.deck.api.model.Quantization;
 import ai.strgm.deck.api.model.Readiness;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -15,12 +23,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
-import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -31,49 +34,44 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * The external DECK server, backed by Nebius Token Factory (D91, D92). Cloud capacity isn't bounded by
- * workers, so profiles are always loaded and leases are granted at once; a lease carries its session's usage.
- * DECK stores no provider credentials in v0.5: it forwards the one DEALER sends (D104).
+ * The DECK server backed by an OpenAI-compatible provider, configured under {@code deck.upstream}: Nebius Token
+ * Factory by default (D91, D92), or a server on the operator's own hardware, such as oMLX. The provider manages
+ * its own capacity, so profiles are always loaded and leases are granted at once, up to each model's instance
+ * budget; a lease carries its session's usage. DECK stores no provider credentials in v0.5: it forwards the one
+ * DEALER sends (D104).
  */
 @Component
-@Profile("external")
-public class NebiusBackend implements DeckBackend {
-    private static final String PREFIX = "nebius/";
-
-    private final DeckProperties props;
-    private final ObjectMapper mapper;
+public class OpenAiCompatibleServer extends AbstractDeckServer {
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
-    private final Map<String, LeaseRecord> leases = Collections.synchronizedMap(new LinkedHashMap<>());
+    private final UpstreamProperties upstream;
+    private final String prefix;
 
-    public NebiusBackend(final DeckProperties props, final ObjectMapper mapper) {
-        this.props = props;
-        this.mapper = mapper;
+    public OpenAiCompatibleServer(final DeckProperties props, final UpstreamProperties upstream,
+            final ObjectMapper mapper) {
+        super(props, mapper);
+        this.upstream = upstream;
+        this.prefix = upstream.idPrefix() == null ? upstream.provider() + "/" : upstream.idPrefix();
     }
 
-    private DeckProperties.NebiusModel model(final String profileId) {
-        return props.nebius().models().stream().filter(m -> (PREFIX + m.model()).equals(profileId)).findFirst()
-                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "not_found", "Unknown profile: " + profileId));
+    private UpstreamProperties.Model model(final String profileId) {
+        return upstream.models().stream().filter(m -> (prefix + m.model()).equals(profileId)).findFirst()
+                .orElseThrow(() -> unknownProfile(profileId));
     }
 
-    private List<ai.strgm.deck.api.model.Profile> profiles() {
-        return props.nebius().models().stream()
-                .map(m -> new ai.strgm.deck.api.model.Profile(PREFIX + m.model(), PREFIX + m.model(), m.contextWindow(),
-                        Readiness.LOADED).provider("nebius").limitations(List.of())
-                        .maxLeases(m.maxLeases()).activeLeases(active(PREFIX + m.model()).size())
+    private List<ModelProfile> profiles() {
+        return upstream.models().stream()
+                .map(m -> new ModelProfile(prefix + m.model(), prefix + m.model(), m.contextWindow(),
+                        Readiness.LOADED).provider(upstream.provider()).limitations(new Limitations())
+                        .quantization(m.quantization() == null ? null : new Quantization(m.quantization()).bitsPerWeight(m.bitsPerWeight()))
+                        .maxLeases(m.maxLeases()).activeLeases(active(prefix + m.model()).size())
                         .prices(new Prices().inputPerMTok(m.inputPerMTok()).cachedInputPerMTok(m.cachedInputPerMTok())
                                 .outputPerMTok(m.outputPerMTok())))
                 .toList();
     }
 
     @Override
-    public Catalogue catalogue() {
-        return new Catalogue(props.serverName(), Implementation.EXTERNAL, profiles());
-    }
-
-    private List<String> active(final String profileId) {
-        synchronized (leases) {
-            return leases.values().stream().filter(l -> l.active() && l.profileId.equals(profileId)).map(l -> l.id).toList();
-        }
+    public ModelProfiles modelProfiles() {
+        return new ModelProfiles(props.serverName(), upstream.implementation(), profiles());
     }
 
     @Override
@@ -89,36 +87,6 @@ public class NebiusBackend implements DeckBackend {
         return lease.toApi();
     }
 
-    private LeaseRecord record(final String id) {
-        final var l = leases.get(id);
-        if (l == null) {
-            throw new ApiException(HttpStatus.NOT_FOUND, "not_found", "Unknown lease: " + id);
-        }
-        return l;
-    }
-
-    @Override
-    public Lease get(final String leaseId) {
-        return record(leaseId).toApi();
-    }
-
-    @Override
-    public void release(final String leaseId) {
-        final var l = record(leaseId);
-        if (l.active()) {
-            l.state = LeaseState.RELEASED;
-        }
-    }
-
-    @Override
-    public Lease evict(final String leaseId) {
-        final var l = record(leaseId);
-        if (l.active()) {
-            l.state = LeaseState.EVICTED;
-        }
-        return l.toApi();
-    }
-
     private double cost(final LeaseRecord l) {
         final var m = model(l.profileId);
         synchronized (l) {
@@ -129,14 +97,9 @@ public class NebiusBackend implements DeckBackend {
 
     @Override
     public DeckState state() {
-        final List<LeaseRecord> all;
-        synchronized (leases) {
-            all = new ArrayList<>(leases.values());
-        }
-        final var spend = all.stream().mapToDouble(this::cost).sum();
-        final var recent = all.subList(Math.max(0, all.size() - 30), all.size()).stream().map(LeaseRecord::toApi).toList();
-        return new DeckState(props.serverName(), Implementation.EXTERNAL, profiles(), recent).provider("nebius")
-                .spendUsd(spend);
+        final var spend = all().stream().mapToDouble(this::cost).sum();
+        return new DeckState(props.serverName(), upstream.implementation(), profiles(), recent())
+                .provider(upstream.provider()).spendUsd(spend);
     }
 
     @Override
@@ -145,38 +108,36 @@ public class NebiusBackend implements DeckBackend {
             throw new ApiException(HttpStatus.UNAUTHORIZED, "authentication_error",
                     "Missing X-Provider-Authorization: this DECK server forwards the provider credential it receives (D104)");
         }
-        final var lease = record(leaseId);
-        if (!lease.active()) {
-            throw new ApiException(HttpStatus.CONFLICT, "lease_inactive", "Lease " + leaseId + " is " + lease.state.getValue());
-        }
+        final var lease = activeRecord(leaseId);
         final var m = model(lease.profileId);
         final var body = (ObjectNode) request.deepCopy();
         body.put("model", m.model());
         body.put("stream", true);
         body.putObject("stream_options").put("include_usage", true);
-        final var base = props.nebius().baseUrl().endsWith("/") ? props.nebius().baseUrl() : props.nebius().baseUrl() + "/";
-        final var upstream = HttpRequest.newBuilder(URI.create(base + "chat/completions"))
+        final var base = upstream.baseUrl().endsWith("/") ? upstream.baseUrl() : upstream.baseUrl() + "/";
+        final var upstreamRequest = HttpRequest.newBuilder(URI.create(base + "chat/completions"))
                 .header("Authorization", providerAuthorization)
                 .header("Content-Type", "application/json")
                 .header("Accept", "text/event-stream")
                 .timeout(Duration.ofMinutes(5))
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .build();
+        final var name = "Provider " + upstream.provider();
         final HttpResponse<java.io.InputStream> response;
         try {
-            response = http.send(upstream, HttpResponse.BodyHandlers.ofInputStream());
+            response = http.send(upstreamRequest, HttpResponse.BodyHandlers.ofInputStream());
         } catch (Exception e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
-            throw new ApiException(HttpStatus.GATEWAY_TIMEOUT, "upstream_error", "Nebius Token Factory unreachable: " + e.getMessage());
+            throw new ApiException(HttpStatus.GATEWAY_TIMEOUT, "upstream_error", name + " unreachable: " + e.getMessage());
         }
         if (response.statusCode() != 200) {
             final String text;
             try (var in = response.body()) {
                 text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
             } catch (Exception e) {
-                throw new ApiException(HttpStatus.BAD_GATEWAY, "upstream_error", "Nebius Token Factory error " + response.statusCode());
+                throw new ApiException(HttpStatus.BAD_GATEWAY, "upstream_error", name + " error " + response.statusCode());
             }
             final var status = switch (response.statusCode()) {
                 case 429 -> HttpStatus.TOO_MANY_REQUESTS;
@@ -184,7 +145,7 @@ public class NebiusBackend implements DeckBackend {
                 case 400, 404, 422 -> HttpStatus.BAD_REQUEST;
                 default -> HttpStatus.SERVICE_UNAVAILABLE;
             };
-            throw new UpstreamException(status, text.isBlank() ? "{\"error\":{\"message\":\"Nebius Token Factory error "
+            throw new UpstreamException(status, text.isBlank() ? "{\"error\":{\"message\":\"" + name + " error "
                     + response.statusCode() + "\",\"type\":\"upstream_error\"}}" : text,
                     response.headers().firstValue("Retry-After").orElse(null));
         }

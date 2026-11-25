@@ -1,10 +1,10 @@
 package ai.strgm.dealer;
 
-import ai.strgm.deck.api.client.CatalogueApi;
 import ai.strgm.deck.api.client.LeasesApi;
+import ai.strgm.deck.api.client.ModelProfilesApi;
 import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseRequest;
-import ai.strgm.deck.api.model.Profile;
+import ai.strgm.deck.api.model.ModelProfile;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -23,7 +23,7 @@ import tools.jackson.databind.ObjectMapper;
 @Component
 public class DeckRegistry {
 
-    public record Server(DealerProperties.ServerDef def, CatalogueApi catalogue, LeasesApi leases,
+    public record Server(DealerProperties.ServerDef def, ModelProfilesApi modelProfiles, LeasesApi leases,
             String providerAuthorization) {
         public boolean external() {
             return "external".equals(def.egress());
@@ -34,7 +34,7 @@ public class DeckRegistry {
         }
     }
 
-    public record ProfileRef(Server server, Profile profile) {
+    public record ProfileRef(Server server, ModelProfile profile) {
         public String key() {
             return server.name() + "/" + profile.getId();
         }
@@ -69,7 +69,7 @@ public class DeckRegistry {
                     .defaultHeader("Authorization", "Bearer " + def.key()).build();
             final var factory = HttpServiceProxyFactory.builderFor(RestClientAdapter.create(rest)).build();
             final var credential = def.providerCredentialEnv() == null ? null : System.getenv(def.providerCredentialEnv());
-            servers.put(def.name(), new Server(def, factory.createClient(CatalogueApi.class),
+            servers.put(def.name(), new Server(def, factory.createClient(ModelProfilesApi.class),
                     factory.createClient(LeasesApi.class), credential == null || credential.isBlank() ? null : "Bearer " + credential));
         }
         refresh();
@@ -80,8 +80,8 @@ public class DeckRegistry {
         final List<ProfileRef> next = new ArrayList<>();
         for (final var s : servers.values()) {
             try {
-                final var catalogue = s.catalogue().getCatalogue().getBody();
-                catalogue.getProfiles().forEach(p -> next.add(new ProfileRef(s, p)));
+                final var offered = s.modelProfiles().getModelProfiles().getBody();
+                offered.getProfiles().forEach(p -> next.add(new ProfileRef(s, p)));
                 reachable.put(s.name(), true);
             } catch (Exception e) {
                 reachable.put(s.name(), false);
