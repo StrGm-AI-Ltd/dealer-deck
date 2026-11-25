@@ -113,6 +113,17 @@ paths:
                   $ref: '#/components/examples/LeaseReady'
                 loading:
                   $ref: '#/components/examples/LeaseLoading'
+        '400':
+          description: The body is missing, isn't valid JSON, or lacks `profileId` or `sessionRef`
+          content:
+            application/json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/ErrorResponse'
+              examples:
+                missingField:
+                  $ref: '#/components/examples/MissingRequiredField'
+                invalidJson:
+                  $ref: '#/components/examples/InvalidJson'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -253,6 +264,8 @@ paths:
               examples:
                 streamingOnly:
                   $ref: '#/components/examples/StreamingOnly'
+                invalidJson:
+                  $ref: '#/components/examples/InvalidJson'
                 missingLease:
                   $ref: '#/components/examples/MissingLeaseHeader'
         '401':
@@ -402,6 +415,14 @@ components:
       summary: '"stream" is not true'
       value:
         error: {message: 'Streaming only: set "stream": true', type: invalid_request_error, code: null, param: null}
+    InvalidJson:
+      summary: The body isn't valid JSON
+      value:
+        error: {message: "The request body isn't valid JSON", type: invalid_request_error, code: null, param: null}
+    MissingRequiredField:
+      summary: A required field is missing
+      value:
+        error: {message: 'Invalid request body: sessionRef must not be null', type: invalid_request_error, code: null, param: sessionRef}
     MissingLeaseHeader:
       summary: No X-Lease-Id header
       value:

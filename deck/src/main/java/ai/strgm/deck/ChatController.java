@@ -8,6 +8,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -31,7 +33,12 @@ public class ChatController {
         if (leaseId == null || leaseId.isBlank()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "Missing required header X-Lease-Id");
         }
-        final var request = mapper.readTree(body);
+        final JsonNode request;
+        try {
+            request = mapper.readTree(body);
+        } catch (JacksonException e) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "The request body isn't valid JSON");
+        }
         if (!Json.bool(request.path("stream"))) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "Streaming only: set \"stream\": true");
         }
