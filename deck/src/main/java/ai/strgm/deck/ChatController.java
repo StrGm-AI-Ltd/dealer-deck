@@ -16,11 +16,11 @@ import tools.jackson.databind.ObjectMapper;
  */
 @RestController
 public class ChatController {
-    private final DeckBackend backend;
+    private final DeckServer server;
     private final ObjectMapper mapper;
 
-    public ChatController(final DeckBackend backend, final ObjectMapper mapper) {
-        this.backend = backend;
+    public ChatController(final DeckServer server, final ObjectMapper mapper) {
+        this.server = server;
         this.mapper = mapper;
     }
 
@@ -35,6 +35,6 @@ public class ChatController {
         if (!Json.bool(request.path("stream"))) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "Streaming only: set \"stream\": true");
         }
-        return ResponseEntity.ok().contentType(MediaType.TEXT_EVENT_STREAM).body(backend.chat(leaseId, providerAuthorization, request));
+        return ResponseEntity.ok().contentType(MediaType.TEXT_EVENT_STREAM).body(server.chat(leaseId, providerAuthorization, request));
     }
 }

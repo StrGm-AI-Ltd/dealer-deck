@@ -6,4 +6,4 @@ pluginManagement {
 }
 
 rootProject.name = 'dealer-deck'
-include 'api', 'dealer', 'deck', 'dealer-ui'
+include 'api', 'dealer', 'deck', 'deck-openai', 'deck-stub', 'dealer-ui'

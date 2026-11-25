@@ -22,9 +22,9 @@ start() { local name=$1; shift; "$@" > "demo-logs/$name.log" 2>&1 & echo $! >> d
 wait_for() { for _ in $(seq 1 120); do curl -sf -o /dev/null "$1" && return 0; sleep 1; done; echo "Timed out waiting for $1" >&2; exit 1; }
 
 echo "Building..."
-./gradlew -q :deck:bootJar :dealer:bootJar
-start deck-stub "$JAVA" -jar deck/build/libs/deck.jar --spring.profiles.active=stub --deck.time-factor="${TIME_FACTOR:-0.5}"
-start deck-nebius "$JAVA" -jar deck/build/libs/deck.jar --spring.profiles.active=external
+./gradlew -q :deck-stub:bootJar :deck-openai:bootJar :dealer:bootJar
+start deck-stub "$JAVA" -jar deck-stub/build/libs/deck-stub.jar --deck.time-factor="${TIME_FACTOR:-0.5}"
+start deck-nebius "$JAVA" -jar deck-openai/build/libs/deck-openai.jar
 start dealer "$JAVA" -jar dealer/build/libs/dealer.jar
 start dealer-ui ./gradlew -q :dealer-ui:bootRun
 wait_for http://localhost:8081/actuator/health

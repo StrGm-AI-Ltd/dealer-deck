@@ -1,0 +1,28 @@
+spring:
+  application:
+    name: deck-openai
+  config:
+    import: classpath:deck-defaults.yml
+server:
+  port: 8082
+deck:
+  server-name: nebius
+  api-key: ${DECK_NEBIUS_KEY:deck-key-nebius}
+  # The OpenAI-compatible provider behind this server: Nebius Token Factory here. For a server on your own
+  # hardware, e.g. oMLX, set provider: omlx, implementation: local, its base-url and its models. Profile ids are
+  # <provider>/<model> unless id-prefix says otherwise.
+  upstream:
+    provider: nebius
+    implementation: external
+    base-url: https://api.tokenfactory.nebius.com/v1/
+    models:
+      - model: Qwen/Qwen3-30B-A3B-Instruct-2507
+        context-window: 262144
+        input-per-m-tok: 0.10
+        cached-input-per-m-tok: 0.10
+        output-per-m-tok: 0.30
+        # The instance budget: at most this many sessions on this model at once (D106). Omit for unbounded.
+        max-leases: 2
+        # How the weights are stored, as the provider reports it (for Nebius: /v1/models?verbose=true)
+        quantization: fp8
+        bits-per-weight: 8

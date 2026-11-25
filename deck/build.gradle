@@ -1,12 +1,19 @@
 plugins {
-    id 'java'
-    id 'org.springframework.boot'
+    id 'java-library'
     id 'io.spring.dependency-management'
 }
 
+dependencyManagement {
+    imports {
+        mavenBom 'org.springframework.boot:spring-boot-dependencies:4.1.1'
+    }
+}
+
+// What every DECK server shares: the DECK API's web layer, the DeckServer interface and the lease store. The
+// servers themselves are the deck-openai and deck-stub applications.
 dependencies {
-    implementation project(':api')
-    implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+    api project(':api')
+    api 'org.springframework.boot:spring-boot-starter-webmvc'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.2.1'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
@@ -14,4 +21,3 @@ dependencies {
 }
 
 tasks.named('test') { useJUnitPlatform() }
-bootJar { archiveFileName = 'deck.jar' }

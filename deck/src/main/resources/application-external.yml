@@ -1,5 +1,0 @@
-server:
-  port: 8082
-deck:
-  server-name: nebius
-  api-key: ${DECK_NEBIUS_KEY:deck-key-nebius}
