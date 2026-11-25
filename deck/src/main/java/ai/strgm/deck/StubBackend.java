@@ -163,9 +163,6 @@ public class StubBackend implements DeckBackend {
 
     @Override
     public synchronized List<Lease> leases(final String profileId) {
-        if (profileId != null) {
-            def(profileId);   // 404 for an unknown profile
-        }
         synchronized (leases) {
             return leases.values().stream().filter(LeaseRecord::active)
                     .filter(l -> profileId == null || l.profileId.equals(profileId)).map(LeaseRecord::toApi).toList();
