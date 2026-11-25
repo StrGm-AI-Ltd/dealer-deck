@@ -5,7 +5,7 @@ import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.deck.api.model.Usage;
 import java.util.UUID;
 
-/** Mutable lease bookkeeping shared by both implementations. Guarded by the owning backend's lock. */
+/** Mutable lease bookkeeping shared by both implementations. Guarded by the owning server's lock. */
 final class LeaseRecord {
     final String id = "lease-" + UUID.randomUUID().toString().substring(0, 8);
     final String profileId;

@@ -6,8 +6,8 @@ info:
     One interface for every DECK server, local or external (D105). A DECK server publishes its
     capacity-aware model profiles and grants leases on them; DEALER routes and evicts
     in profile and lease terms only, without knowing the hardware (D18, D74).
-    In v0.5 there are two implementations: the external server backed by Nebius Token Factory, and
-    a local stub that simulates two workers. Every endpoint requires DEALER's DECK key (D104).
+    In v0.5 there are two implementations: a server backed by an OpenAI-compatible provider (Nebius Token
+    Factory, or a local server such as oMLX), and a local stub that simulates two workers. Every endpoint requires DEALER's DECK key (D104).
 servers:
   - url: http://localhost:8081
     description: DECK stub
@@ -283,7 +283,7 @@ paths:
               schema:
                 $ref: 'common.yaml#/components/schemas/ErrorResponse'
               example:
-                error: {message: Nebius Token Factory error 429, type: upstream_error}
+                error: {message: Provider nebius error 429, type: upstream_error}
         '502':
           description: The provider's error response couldn't be read (external servers)
           content:
@@ -291,7 +291,7 @@ paths:
               schema:
                 $ref: 'common.yaml#/components/schemas/ErrorResponse'
               example:
-                error: {message: Nebius Token Factory error 500, type: upstream_error, code: null, param: null}
+                error: {message: Provider nebius error 500, type: upstream_error, code: null, param: null}
         '503':
           description: >-
             Any other provider error (external servers). The provider's own error body is passed through; this
@@ -306,7 +306,7 @@ paths:
               schema:
                 $ref: 'common.yaml#/components/schemas/ErrorResponse'
               example:
-                error: {message: Nebius Token Factory error 500, type: upstream_error}
+                error: {message: Provider nebius error 500, type: upstream_error}
         '504':
           description: The provider couldn't be reached (external servers)
           content:
@@ -314,7 +314,7 @@ paths:
               schema:
                 $ref: 'common.yaml#/components/schemas/ErrorResponse'
               example:
-                error: {message: 'Nebius Token Factory unreachable: request timed out', type: upstream_error, code: null, param: null}
+                error: {message: 'Provider nebius unreachable: request timed out', type: upstream_error, code: null, param: null}
   /metrics/state:
     get:
       tags: [Metrics]
@@ -614,8 +614,10 @@ components:
   schemas:
     Implementation:
       type: string
-      description: '`stub`: the simulated local server. `external`: backed by a cloud provider.'
-      enum: [stub, external]
+      description: >-
+        `stub`: the simulated local server. `external`: backed by a cloud provider. `local`: backed by a server on
+        the operator's own hardware, e.g. oMLX on a Mac.
+      enum: [stub, external, local]
     Readiness:
       type: string
       description: >-
@@ -721,7 +723,7 @@ components:
           example: stub/small-a
         provider:
           type: string
-          description: Set by external servers, e.g. `nebius`; null on the stub
+          description: The provider behind the server, e.g. `nebius` or `omlx`; null on the stub
           example: nebius
         contextWindow:
           type: integer
@@ -878,7 +880,7 @@ components:
           $ref: '#/components/schemas/Implementation'
         provider:
           type: string
-          description: Set by external servers, e.g. `nebius`; null on the stub
+          description: The provider behind the server, e.g. `nebius` or `omlx`; null on the stub
           example: nebius
         workers:
           type: array

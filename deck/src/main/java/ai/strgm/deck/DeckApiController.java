@@ -15,45 +15,45 @@ import org.springframework.web.bind.annotation.RestController;
 /** Implements the interfaces generated from the DECK OpenAPI document (D99, D102). */
 @RestController
 public class DeckApiController implements ModelProfilesApi, LeasesApi, MetricsApi {
-    private final DeckBackend backend;
+    private final DeckServer server;
 
-    public DeckApiController(final DeckBackend backend) {
-        this.backend = backend;
+    public DeckApiController(final DeckServer server) {
+        this.server = server;
     }
 
     @Override
     public ResponseEntity<ModelProfiles> getModelProfiles() {
-        return ResponseEntity.ok(backend.modelProfiles());
+        return ResponseEntity.ok(server.modelProfiles());
     }
 
     @Override
     public ResponseEntity<Lease> acquireLease(final LeaseRequest leaseRequest) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(backend.acquire(leaseRequest.getProfileId(), leaseRequest.getSessionRef()));
+        return ResponseEntity.status(HttpStatus.CREATED).body(server.acquire(leaseRequest.getProfileId(), leaseRequest.getSessionRef()));
     }
 
     @Override
     public ResponseEntity<List<Lease>> listLeases(final String profileId) {
-        return ResponseEntity.ok(backend.leases(profileId));
+        return ResponseEntity.ok(server.leases(profileId));
     }
 
     @Override
     public ResponseEntity<Lease> getLease(final String leaseId) {
-        return ResponseEntity.ok(backend.get(leaseId));
+        return ResponseEntity.ok(server.get(leaseId));
     }
 
     @Override
     public ResponseEntity<Void> releaseLease(final String leaseId) {
-        backend.release(leaseId);
+        server.release(leaseId);
         return ResponseEntity.noContent().build();
     }
 
     @Override
     public ResponseEntity<Lease> evictLease(final String leaseId) {
-        return ResponseEntity.ok(backend.evict(leaseId));
+        return ResponseEntity.ok(server.evict(leaseId));
     }
 
     @Override
     public ResponseEntity<DeckState> getDeckState() {
-        return ResponseEntity.ok(backend.state());
+        return ResponseEntity.ok(server.state());
     }
 }

@@ -49,7 +49,9 @@ v0.5 was built at a hackathon. The local DECK server is a **simulated stub**; th
 
 - **DEALER** knows nothing about hardware. It routes and evicts in profile and lease terms only.
 - **DECK** is one interface with two implementations: the external server (Nebius in v0.5) and the
-  local server (a stub in v0.5; real BC-250 boards and a Mac in v1). A DECK server publishes capacity-aware
+  local server (a stub in v0.5; real BC-250 boards and a Mac in v1). The external implementation talks to any
+  OpenAI-compatible provider, so it can also front a server on your own hardware, such as oMLX, which it reports
+  as `local`. A DECK server publishes capacity-aware
   model profiles (readiness, loading time, limitations, context windows, prefill and decode speeds by context
   size, quantization, prices, budgets) and grants leases.
 - **The DEALER UI** is a separate app that reads both services' metrics REST APIs. The servers define no UI.
@@ -117,7 +119,7 @@ java -jar dealer/build/libs/dealer.jar                                  # :8080 
 |---|---|
 | `api` | The OpenAPI documents (the single source of truth) and the code generated from them |
 | `dealer` | The router (Spring Boot 4, Java 21) |
-| `deck` | The DECK servers: `stub` and `external` (Nebius) implementations of one interface |
+| `deck` | The DECK servers: `stub` and `external` (any OpenAI-compatible provider, Nebius by default) implementations of one interface |
 | `dealer-ui` | The DEALER UI (Vaadin 25) |
 
 ## Configuration
@@ -130,8 +132,15 @@ java -jar dealer/build/libs/dealer.jar                                  # :8080 
     provider credential;
   - `dealer.timers`: the minimum lease time before a lease can be evicted, and the idle time after which
     a lease is released.
-- **DECK** (`deck/src/main/resources/application*.yml`): the DECK key, the stub's time factor, and the
-  Nebius models with their context windows, prices and `max-leases` budgets.
+- **DECK** (`deck/src/main/resources/application*.yml`): the DECK key, the stub's time factor, and, under
+  `deck.upstream`, the external server's provider (Nebius by default) and its models with their context
+  windows, prices, quantization and `max-leases` budgets. To serve a local oMLX model instead, for example:
+
+  ```bash
+  DECK_UPSTREAM_PROVIDER=omlx DECK_UPSTREAM_IMPLEMENTATION=local DECK_UPSTREAM_BASEURL=http://127.0.0.1:9191/v1/ \
+  DECK_UPSTREAM_MODELS_0_MODEL=Qwen3.8-27B-graft DECK_UPSTREAM_MODELS_0_CONTEXTWINDOW=65536 DECK_UPSTREAM_MODELS_0_MAXLEASES=1 \
+    java -jar deck/build/libs/deck.jar --spring.profiles.active=external --server.port=8083 --deck.server-name=local
+  ```
 
 All keys in the configuration files are demo values. Override them with environment variables
 (`DECK_STUB_KEY`, `DECK_NEBIUS_KEY`, `DEALER_METRICS_KEY`) outside a demo.
