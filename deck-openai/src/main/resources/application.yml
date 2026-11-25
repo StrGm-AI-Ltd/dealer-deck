@@ -1,23 +1,14 @@
 spring:
   application:
-    name: deck
-  threads:
-    virtual:
-      enabled: true
-  mvc:
-    async:
-      request-timeout: 10m
-springdoc:
-  swagger-ui:
-    url: /openapi/deck.yaml
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health
+    name: deck-openai
+  config:
+    import: classpath:deck-defaults.yml
+server:
+  port: 8082
 deck:
-  time-factor: 1.0
-  # The OpenAI-compatible provider behind the external server: Nebius Token Factory here. For a server on your own
+  server-name: nebius
+  api-key: ${DECK_NEBIUS_KEY:deck-key-nebius}
+  # The OpenAI-compatible provider behind this server: Nebius Token Factory here. For a server on your own
   # hardware, e.g. oMLX, set provider: omlx, implementation: local, its base-url and its models. Profile ids are
   # <provider>/<model> unless id-prefix says otherwise.
   upstream:

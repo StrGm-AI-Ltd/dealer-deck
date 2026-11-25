@@ -1,5 +1,11 @@
-package ai.strgm.deck;
+package ai.strgm.deck.openai;
 
+import ai.strgm.deck.AbstractDeckServer;
+import ai.strgm.deck.ApiException;
+import ai.strgm.deck.DeckProperties;
+import ai.strgm.deck.Json;
+import ai.strgm.deck.LeaseRecord;
+import ai.strgm.deck.UpstreamException;
 import ai.strgm.deck.api.model.DeckState;
 import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseState;
@@ -18,7 +24,6 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
-import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -36,19 +41,19 @@ import tools.jackson.databind.node.ObjectNode;
  * DEALER sends (D104).
  */
 @Component
-@Profile("external")
 public class OpenAiCompatibleServer extends AbstractDeckServer {
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
-    private final DeckProperties.Upstream upstream;
+    private final UpstreamProperties upstream;
     private final String prefix;
 
-    public OpenAiCompatibleServer(final DeckProperties props, final ObjectMapper mapper) {
+    public OpenAiCompatibleServer(final DeckProperties props, final UpstreamProperties upstream,
+            final ObjectMapper mapper) {
         super(props, mapper);
-        this.upstream = props.upstream();
+        this.upstream = upstream;
         this.prefix = upstream.idPrefix() == null ? upstream.provider() + "/" : upstream.idPrefix();
     }
 
-    private DeckProperties.UpstreamModel model(final String profileId) {
+    private UpstreamProperties.Model model(final String profileId) {
         return upstream.models().stream().filter(m -> (prefix + m.model()).equals(profileId)).findFirst()
                 .orElseThrow(() -> unknownProfile(profileId));
     }

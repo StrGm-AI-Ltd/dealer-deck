@@ -1,5 +1,10 @@
-package ai.strgm.deck;
+package ai.strgm.deck.stub;
 
+import ai.strgm.deck.AbstractDeckServer;
+import ai.strgm.deck.ApiException;
+import ai.strgm.deck.DeckProperties;
+import ai.strgm.deck.Json;
+import ai.strgm.deck.LeaseRecord;
 import ai.strgm.deck.api.model.DeckState;
 import ai.strgm.deck.api.model.Implementation;
 import ai.strgm.deck.api.model.Lease;
@@ -17,7 +22,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -33,7 +37,6 @@ import tools.jackson.databind.ObjectMapper;
  * {@code deck.time-factor}. A request streams at the speeds the profile advertises for its prompt's size.
  */
 @Component
-@Profile("stub")
 public class StubServer extends AbstractDeckServer {
 
     record Speed(int contextTokens, double prefillTps, double decodeTps) {}
@@ -55,17 +58,19 @@ public class StubServer extends AbstractDeckServer {
             + "focused functions, name things for what they do, test the behaviour rather than the implementation, "
             + "and keep side effects at the edges of the system so the core stays easy to reason about.").split(" ");
 
+    private final StubProperties stub;
     private final Map<String, String> loaded = new LinkedHashMap<>(Map.of("w1", "small-a", "w2", "small-b"));
 
-    public StubServer(final DeckProperties props, final ObjectMapper mapper) {
+    public StubServer(final DeckProperties props, final StubProperties stub, final ObjectMapper mapper) {
         super(props, mapper);
+        this.stub = stub;
         loaded.clear();
         loaded.put("w1", "small-a");
         loaded.put("w2", "small-b");
     }
 
     private long scaled(final long ms) {
-        return Math.round(ms * props.timeFactor());
+        return Math.round(ms * stub.timeFactor());
     }
 
     private Def def(final String id) {
@@ -105,8 +110,8 @@ public class StubServer extends AbstractDeckServer {
                 .limitations(new Limitations().leaseReductions(reductions))
                 .prices(new Prices().inputPerMTok(0.0).cachedInputPerMTok(0.0).outputPerMTok(0.0))
                 .maxLeases(1).activeLeases(active(d.id()).size())
-                .speeds(d.speeds().stream().map(s -> new SpeedPoint(s.contextTokens(), s.prefillTps() / props.timeFactor(),
-                        s.decodeTps() / props.timeFactor())).toList());
+                .speeds(d.speeds().stream().map(s -> new SpeedPoint(s.contextTokens(), s.prefillTps() / stub.timeFactor(),
+                        s.decodeTps() / stub.timeFactor())).toList());
     }
 
     @Override
@@ -167,7 +172,7 @@ public class StubServer extends AbstractDeckServer {
             while (lease.state == LeaseState.LOADING && System.currentTimeMillis() < deadline) {
                 sleep(100);
             }
-            sleep(scaled(d.ttftMs()) + Math.round(prompt * 1000.0 / speed.prefillTps() * props.timeFactor()));
+            sleep(scaled(d.ttftMs()) + Math.round(prompt * 1000.0 / speed.prefillTps() * stub.timeFactor()));
             final var id = "chatcmpl-" + lease.id;
             final var created = System.currentTimeMillis() / 1000;
             for (int i = 0; i < maxTokens; i++) {
@@ -182,7 +187,7 @@ public class StubServer extends AbstractDeckServer {
                 delta.put("content", WORDS[i] + " ");
                 choice.putNull("finish_reason");
                 write(out, chunk.toString());
-                sleep(Math.round(1000.0 / speed.decodeTps() * props.timeFactor()));
+                sleep(Math.round(1000.0 / speed.decodeTps() * stub.timeFactor()));
             }
             final var last = mapper.createObjectNode();
             last.put("id", id).put("object", "chat.completion.chunk").put("created", created).put("model", d.model());

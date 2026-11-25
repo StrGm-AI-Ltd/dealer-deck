@@ -13,7 +13,7 @@ import tools.jackson.databind.ObjectMapper;
  * What both DECK implementations share: the lease store, and the lease operations that don't depend on how a
  * server manages its capacity. A lease's state changes only under this object's lock.
  */
-abstract class AbstractDeckServer implements DeckServer {
+public abstract class AbstractDeckServer implements DeckServer {
     protected final DeckProperties props;
     protected final ObjectMapper mapper;
     /** Every lease this server has granted, oldest first. */

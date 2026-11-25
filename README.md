@@ -12,8 +12,8 @@ v0.5 was built at a hackathon. The local DECK server is a **simulated stub**; th
 
 ## How DEALER + DECK uses Nebius Token Factory
 
-- **Nebius Token Factory is the provider behind the external DECK server** (`deck` module, `external`
-  profile). It serves `nebius/…` profiles, here `nebius/Qwen/Qwen3-30B-A3B-Instruct-2507` with a 262k
+- **Nebius Token Factory is the provider behind the external DECK server** (the `deck-openai`
+  module). It serves `nebius/…` profiles, here `nebius/Qwen/Qwen3-30B-A3B-Instruct-2507` with a 262k
   context window, through Nebius's OpenAI-compatible API (`https://api.tokenfactory.nebius.com/v1/`).
 - **It's the overflow capacity behind local hardware.** In the demo, when a priority-80 client needs the
   local hardware, DEALER evicts two priority-50 agents. Agent A, whose client allows external routing, is
@@ -109,8 +109,8 @@ client key, and send the `X-Session-Id` header.
 
 ```bash
 ./gradlew build                                   # validates the OpenAPI documents, generates code, builds everything
-java -jar deck/build/libs/deck.jar --spring.profiles.active=stub        # :8081
-java -jar deck/build/libs/deck.jar --spring.profiles.active=external    # :8082
+java -jar deck-stub/build/libs/deck-stub.jar                            # :8081
+java -jar deck-openai/build/libs/deck-openai.jar                        # :8082
 java -jar dealer/build/libs/dealer.jar                                  # :8080 (needs NEBIUS_API_KEY for the Nebius path)
 ./gradlew :dealer-ui:bootRun                                            # :8090
 ```
@@ -119,7 +119,9 @@ java -jar dealer/build/libs/dealer.jar                                  # :8080 
 |---|---|
 | `api` | The OpenAPI documents (the single source of truth) and the code generated from them |
 | `dealer` | The router (Spring Boot 4, Java 21) |
-| `deck` | The DECK servers: `stub` and `external` (any OpenAI-compatible provider, Nebius by default) implementations of one interface |
+| `deck` | What every DECK server shares (`ai.strgm.deck`): the DECK API's web layer, the `DeckServer` interface and the lease store |
+| `deck-openai` | The DECK server backed by an OpenAI-compatible provider: Nebius by default, or a local server such as oMLX |
+| `deck-stub` | The simulated local DECK server |
 | `dealer-ui` | The DEALER UI (Vaadin 25) |
 
 ## Configuration
@@ -132,14 +134,14 @@ java -jar dealer/build/libs/dealer.jar                                  # :8080 
     provider credential;
   - `dealer.timers`: the minimum lease time before a lease can be evicted, and the idle time after which
     a lease is released.
-- **DECK** (`deck/src/main/resources/application*.yml`): the DECK key, the stub's time factor, and, under
-  `deck.upstream`, the external server's provider (Nebius by default) and its models with their context
+- **DECK** (`application.yml` in `deck-stub` and `deck-openai`): the DECK key, the stub's time factor, and,
+  under `deck.upstream`, the provider (Nebius by default) and its models with their context
   windows, prices, quantization and `max-leases` budgets. To serve a local oMLX model instead, for example:
 
   ```bash
   DECK_UPSTREAM_PROVIDER=omlx DECK_UPSTREAM_IMPLEMENTATION=local DECK_UPSTREAM_BASEURL=http://127.0.0.1:9191/v1/ \
   DECK_UPSTREAM_MODELS_0_MODEL=Qwen3.8-27B-graft DECK_UPSTREAM_MODELS_0_CONTEXTWINDOW=65536 DECK_UPSTREAM_MODELS_0_MAXLEASES=1 \
-    java -jar deck/build/libs/deck.jar --spring.profiles.active=external --server.port=8083 --deck.server-name=local
+    java -jar deck-openai/build/libs/deck-openai.jar --server.port=8083 --deck.server-name=local
   ```
 
 All keys in the configuration files are demo values. Override them with environment variables

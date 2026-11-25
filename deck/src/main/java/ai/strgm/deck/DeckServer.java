@@ -8,8 +8,9 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 import tools.jackson.databind.JsonNode;
 
 /**
- * One DECK interface, two implementations (D105): an OpenAI-compatible provider, such as Nebius Token Factory or a
- * local oMLX server, and the simulated stub. {@link AbstractDeckServer} holds what they share.
+ * One DECK interface, two implementations (D105), each an application of its own: the {@code deck-openai} module,
+ * backed by an OpenAI-compatible provider such as Nebius Token Factory or a local oMLX server, and the
+ * {@code deck-stub} module, which simulates local hardware. {@link AbstractDeckServer} holds what they share.
  */
 public interface DeckServer {
     ModelProfiles modelProfiles();
