@@ -34,6 +34,9 @@ import org.springframework.stereotype.Component;
  * The router queue, placement and eviction.
  * <ul>
  * <li>A session keeps its lease across requests (sticky) until the lease idles out or is evicted.</li>
+ * <li>A session holds one lease and queues one acquisition at a time: its other requests wait for the queued one,
+ * and a model switch waits for the requests in flight, so the old lease is released before the new one is acquired
+ * (#64).</li>
  * <li>Dispatch places every placeable request in priority order: a request blocked on one server doesn't
  * hold up one that another server can take (D97).</li>
  * <li>Only client priority evicts (D59), between requests (D31), and not before the minimum lease time M.
@@ -68,6 +71,8 @@ public class Scheduler {
         long lastActivity = System.currentTimeMillis();
         int inFlight;
         boolean evictPending;
+        /** The session's queued acquisition: there is one at a time (#64). */
+        @Nullable Waiter pending;
         int requests;
         long promptTokens;
         long cachedTokens;
@@ -152,28 +157,47 @@ public class Scheduler {
         return placement;
     }
 
-    /** Places the request on its session's lease, or queues it for a new one. */
+    /**
+     * Places the request on its session's lease, or queues it for a new one. A session queues one acquisition at a
+     * time (#64): a request that finds one queued waits for it, then tries again.
+     */
     private Placement place(final ClientDef client, final String sessionId, final String model, final int requestPriority) {
-        final Waiter waiter;
+        final Session session;
         synchronized (lock) {
-            final var session = sessions.computeIfAbsent(client.name() + "|" + sessionId, key -> new Session(client, sessionId));
+            session = sessions.computeIfAbsent(client.name() + "|" + sessionId, key -> new Session(client, sessionId));
             session.requests++;
             session.lastActivity = System.currentTimeMillis();
-            final var held = session.profile;
-            final var heldLease = session.leaseId;
-            if (held != null && heldLease != null && !session.evictPending && model.equals(session.model)) {
-                session.inFlight++;
-                return new Placement(session, held, heldLease);
-            }
-            if (held != null && heldLease != null && session.inFlight == 0 && !model.equals(session.model)) {
-                decks.release(held.server(), heldLease);
-                clearLease(session, "released");
-            }
-            session.model = model;
-            waiter = new Waiter(session, model, requestPriority, seq++);
-            waiters.add(waiter);
         }
-        dispatch();
+        while (true) {
+            final Waiter waiter;
+            final boolean queuedAhead;
+            synchronized (lock) {
+                final var pending = session.pending;
+                final var held = session.profile;
+                final var heldLease = session.leaseId;
+                if (pending != null) {
+                    waiter = pending;
+                    queuedAhead = true;
+                } else if (held != null && heldLease != null && !session.evictPending && model.equals(session.model)) {
+                    session.inFlight++;
+                    return new Placement(session, held, heldLease);
+                } else {
+                    waiter = new Waiter(session, model, requestPriority, seq++);
+                    waiters.add(waiter);
+                    session.pending = waiter;
+                    queuedAhead = false;
+                }
+            }
+            if (!queuedAhead) {
+                dispatch();
+                return placed(waiter);
+            }
+            awaitSettled(waiter);
+        }
+    }
+
+    /** Waits for the request's own acquisition to be placed. */
+    private Placement placed(final Waiter waiter) {
         try {
             return waiter.future.get();
         } catch (InterruptedException exception) {
@@ -187,10 +211,29 @@ public class Scheduler {
         }
     }
 
+    /** Waits, without holding the lock, for another request's acquisition in the session to be placed or cancelled. */
+    private static void awaitSettled(final Waiter waiter) {
+        try {
+            waiter.future.get();
+        } catch (ExecutionException exception) {
+            // it was cancelled: the next attempt decides what this request does
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", "Interrupted while queued");
+        }
+    }
+
     private void cancel(final Waiter waiter) {
         synchronized (lock) {
             waiters.remove(waiter);
             reservations.values().removeIf(reserved -> reserved == waiter);
+            if (waiter.session.pending == waiter) {
+                waiter.session.pending = null;
+            }
+            // wakes the requests waiting for it; a placement made just before the cancel is undone
+            if (!waiter.future.completeExceptionally(new IllegalStateException("The queued request was cancelled"))) {
+                release(waiter.future.join(), 0, 0, 0);
+            }
         }
     }
 
@@ -292,21 +335,37 @@ public class Scheduler {
     /** Places every placeable waiter, in priority order, and starts evictions where client priority allows. */
     public void dispatch() {
         synchronized (lock) {
+            // A waiter whose session still holds a lease is a model switch, or a request that came while the lease
+            // was being evicted. Once the session's requests in flight end, the old lease goes first: released here
+            // for a model switch, evicted by release() for an eviction. So a session never holds two leases (#64).
+            for (final var waiter : waiters) {
+                final var session = waiter.session;
+                final var held = session.profile;
+                final var heldLease = session.leaseId;
+                if (held != null && heldLease != null && session.inFlight == 0) {
+                    decks.release(held.server(), heldLease);
+                    clearLease(session, "released");
+                }
+            }
             waiters.sort(Comparator.<Waiter>comparingInt(queued -> -queued.session.client.priority())
                     .thenComparingInt(queued -> -queued.requestPriority).thenComparingLong(queued -> queued.seq));
             final var queue = waiters.iterator();
             while (queue.hasNext()) {
                 final var waiter = queue.next();
+                final var session = waiter.session;
+                if (session.leaseId != null) {
+                    continue;
+                }
                 ProfileRef firstBlocked = null;
                 List<String> firstBlockers = null;
                 boolean placed = false;
-                for (final var candidate : candidates(waiter.session.client, waiter.model)) {
+                for (final var candidate : candidates(session.client, waiter.model)) {
                     if (reservedForOther(candidate, waiter)) {
                         continue;
                     }
                     try {
-                        final var lease = decks.acquire(candidate, waiter.session.ref());
-                        final var session = waiter.session;
+                        final var lease = decks.acquire(candidate, session.ref());
+                        session.model = waiter.model;
                         session.profile = candidate;
                         session.leaseId = lease.getId();
                         if (lease.getState() == LeaseState.READY) {
@@ -315,6 +374,7 @@ public class Scheduler {
                             session.leaseState = lease.getState().getValue();
                         }
                         session.inFlight++;
+                        session.pending = null;
                         queue.remove();
                         reservations.values().removeIf(reserved -> reserved == waiter);
                         waiter.future.complete(new Placement(session, candidate, lease.getId()));

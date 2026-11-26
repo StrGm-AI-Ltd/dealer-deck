@@ -27,7 +27,9 @@ paths:
       description: >-
         Streaming only in v0.5. The request waits in DEALER's queue until it can be placed on a DECK
         profile. A session keeps its lease across requests (sticky) until the lease idles out or is
-        evicted by a higher-priority client. The response is a server-sent event stream of
+        evicted by a higher-priority client. A session holds one lease at a time: a request that arrives
+        while another request in the session is queued waits for it, and a request for another model
+        waits until the session's requests in flight end. The response is a server-sent event stream of
         `ChatCompletionChunk` objects ending with `data: [DONE]`.
       parameters:
         - name: X-Session-Id
