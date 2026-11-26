@@ -124,6 +124,11 @@ public class Scheduler {
         }
         while (true) {
             final LeaseRequest leaseRequest;
+            // The choice below is made under the lock, so two requests can't both queue a lease request. The waiting
+            // happens outside it, because the dispatch() that places a lease request later, from release() or tick(),
+            // needs the lock too. queuedAhead says whose lease request it is. The owner dispatches it and gets its
+            // placement, already counted in flight, so the new lease can't be released or evicted before it's used;
+            // only the owner cancels it. A request queued behind another's waits for it to settle, then tries again.
             final boolean queuedAhead;
             synchronized (lock) {
                 if (session.pending() != null) {
