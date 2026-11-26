@@ -8,7 +8,10 @@ import org.jspecify.annotations.Nullable;
 
 /** Mutable lease bookkeeping shared by both implementations. Guarded by the owning server's lock. */
 public final class LeaseRecord {
-    public final String id = "lease-" + UUID.randomUUID().toString().substring(0, 8);
+    /** How many of a random UUID's characters a lease id keeps. */
+    private static final int ID_LENGTH = 8;
+
+    public final String id = "lease-" + UUID.randomUUID().toString().substring(0, ID_LENGTH);
     public final String profileId;
     final String sessionRef;
     final long createdAt = System.currentTimeMillis();

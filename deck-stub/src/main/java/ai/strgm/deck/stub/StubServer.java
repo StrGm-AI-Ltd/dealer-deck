@@ -19,6 +19,8 @@ import ai.strgm.deck.api.model.Readiness;
 import ai.strgm.deck.api.model.SpeedPoint;
 import ai.strgm.deck.api.model.Worker;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,6 +46,15 @@ public class StubServer extends AbstractDeckServer {
 
     record Def(String id, String model, int contextWindow, List<String> workers, long loadMs, long ttftMs,
             List<Speed> speeds, String quantization, double bitsPerWeight) {}
+
+    /** Each profile allows one lease, so a lease on one profile takes one lease from every profile it overlaps. */
+    private static final int LEASES_PER_PROFILE = 1;
+    /** The completion length when a request doesn't set {@code max_tokens}. */
+    private static final int DEFAULT_MAX_TOKENS = 40;
+    /** How long a chat request waits for its lease to finish loading. */
+    private static final Duration LOADING_WAIT = Duration.ofSeconds(60);
+    private static final long LOADING_POLL_MS = 100;
+    private static final double MILLIS_PER_SECOND = 1000.0;
 
     private static final List<Speed> SMALL_SPEEDS = List.of(
             new Speed(4096, 800, 40), new Speed(16384, 600, 34), new Speed(32768, 450, 28));
@@ -75,44 +86,45 @@ public class StubServer extends AbstractDeckServer {
     }
 
     private Def def(final String id) {
-        return DEFS.stream().filter(d -> d.id().equals(id)).findFirst()
+        return DEFS.stream().filter(definition -> definition.id().equals(id)).findFirst()
                 .orElseThrow(() -> unknownProfile(id));
     }
 
-    private boolean overlaps(final Def a, final Def b) {
-        return a.workers().stream().anyMatch(b.workers()::contains);
+    private boolean overlaps(final Def first, final Def second) {
+        return first.workers().stream().anyMatch(second.workers()::contains);
     }
 
     /** The profile's speeds at {@code contextTokens}: linear between the two nearest points, clamped outside them. */
-    private static Speed speedAt(final Def d, final long contextTokens) {
-        final var points = d.speeds();
+    private static Speed speedAt(final Def profile, final long contextTokens) {
+        final var points = profile.speeds();
         if (contextTokens <= points.getFirst().contextTokens()) {
             return points.getFirst();
         }
-        for (int i = 1; i < points.size(); i++) {
-            final var hi = points.get(i);
-            if (contextTokens <= hi.contextTokens()) {
-                final var lo = points.get(i - 1);
-                final var t = (double) (contextTokens - lo.contextTokens()) / (hi.contextTokens() - lo.contextTokens());
-                return new Speed((int) contextTokens, lo.prefillTps() + t * (hi.prefillTps() - lo.prefillTps()),
-                        lo.decodeTps() + t * (hi.decodeTps() - lo.decodeTps()));
+        for (int pointIndex = 1; pointIndex < points.size(); pointIndex++) {
+            final var upper = points.get(pointIndex);
+            if (contextTokens <= upper.contextTokens()) {
+                final var lower = points.get(pointIndex - 1);
+                final var fraction = (double) (contextTokens - lower.contextTokens()) / (upper.contextTokens() - lower.contextTokens());
+                return new Speed((int) contextTokens, lower.prefillTps() + fraction * (upper.prefillTps() - lower.prefillTps()),
+                        lower.decodeTps() + fraction * (upper.decodeTps() - lower.decodeTps()));
             }
         }
         return points.getLast();
     }
 
-    private synchronized ModelProfile toApi(final Def d) {
-        final var isLoaded = d.workers().stream().allMatch(w -> d.id().equals(loaded.get(w)));
-        // a lease here takes a worker that every overlapping profile needs, and each of those allows one lease
-        final var reductions = DEFS.stream().filter(o -> o != d && overlaps(o, d)).map(o -> new LeaseReduction(o.id(), 1)).toList();
-        return new ModelProfile(d.id(), d.model(), d.contextWindow(), isLoaded ? Readiness.LOADED : Readiness.UNLOADED)
-                .loadingTimeMs((int) scaled(d.loadMs()))
-                .quantization(new Quantization(d.quantization()).bitsPerWeight(d.bitsPerWeight()))
+    private synchronized ModelProfile toApi(final Def profile) {
+        final var isLoaded = profile.workers().stream().allMatch(worker -> profile.id().equals(loaded.get(worker)));
+        // a lease here takes a worker that every overlapping profile needs
+        final var reductions = DEFS.stream().filter(other -> other != profile && overlaps(other, profile))
+                .map(other -> new LeaseReduction(other.id(), LEASES_PER_PROFILE)).toList();
+        return new ModelProfile(profile.id(), profile.model(), profile.contextWindow(), isLoaded ? Readiness.LOADED : Readiness.UNLOADED)
+                .loadingTimeMs((int) scaled(profile.loadMs()))
+                .quantization(new Quantization(profile.quantization()).bitsPerWeight(profile.bitsPerWeight()))
                 .limitations(new Limitations().leaseReductions(reductions))
                 .prices(new Prices().inputPerMTok(0.0).cachedInputPerMTok(0.0).outputPerMTok(0.0))
-                .maxLeases(1).activeLeases(active(d.id()).size())
-                .speeds(d.speeds().stream().map(s -> new SpeedPoint(s.contextTokens(), s.prefillTps() / stub.timeFactor(),
-                        s.decodeTps() / stub.timeFactor())).toList());
+                .maxLeases(LEASES_PER_PROFILE).activeLeases(active(profile.id()).size())
+                .speeds(profile.speeds().stream().map(point -> new SpeedPoint(point.contextTokens(),
+                        point.prefillTps() / stub.timeFactor(), point.decodeTps() / stub.timeFactor())).toList());
     }
 
     @Override
@@ -121,23 +133,23 @@ public class StubServer extends AbstractDeckServer {
     }
 
     @Override
-    public synchronized Lease acquire(final String profileId, final String sessionRef) {
-        final var d = def(profileId);
+    protected Lease grant(final String profileId, final String sessionRef) {
+        final var profile = def(profileId);
         final var blockers = leases.values().stream().filter(LeaseRecord::active)
-                .filter(l -> overlaps(def(l.profileId), d)).map(l -> l.id).toList();
+                .filter(other -> overlaps(def(other.profileId), profile)).map(other -> other.id).toList();
         if (!blockers.isEmpty()) {
             throw new ApiException(HttpStatus.CONFLICT, "lease_conflict",
                     "Profile " + profileId + " is blocked by active leases", blockers);
         }
-        final var isLoaded = d.workers().stream().allMatch(w -> d.id().equals(loaded.get(w)));
+        final var isLoaded = profile.workers().stream().allMatch(worker -> profile.id().equals(loaded.get(worker)));
         final var lease = new LeaseRecord(profileId, sessionRef, isLoaded ? LeaseState.READY : LeaseState.LOADING);
         leases.put(lease.id, lease);
         if (!isLoaded) {
-            d.workers().forEach(w -> loaded.put(w, "loading " + d.id()));
+            profile.workers().forEach(worker -> loaded.put(worker, "loading " + profile.id()));
             Thread.ofVirtual().start(() -> {
-                sleep(scaled(d.loadMs()));
+                sleep(scaled(profile.loadMs()));
                 synchronized (this) {
-                    d.workers().forEach(w -> loaded.put(w, d.id()));
+                    profile.workers().forEach(worker -> loaded.put(worker, profile.id()));
                     if (lease.state == LeaseState.LOADING) {
                         lease.readyAt = System.currentTimeMillis();
                         lease.state = LeaseState.READY;
@@ -150,10 +162,11 @@ public class StubServer extends AbstractDeckServer {
 
     @Override
     public synchronized DeckState state() {
-        final var workers = loaded.entrySet().stream().map(e -> {
-            final var busy = leases.values().stream().anyMatch(l -> l.active() && def(l.profileId).workers().contains(e.getKey()));
-            return new Worker().id(e.getKey()).loadedProfile(e.getValue())
-                    .state(e.getValue().startsWith("loading") ? "loading" : busy ? "leased" : "idle");
+        final var workers = loaded.entrySet().stream().map(worker -> {
+            final var busy = leases.values().stream()
+                    .anyMatch(lease -> lease.active() && def(lease.profileId).workers().contains(worker.getKey()));
+            return new Worker().id(worker.getKey()).loadedProfile(worker.getValue())
+                    .state(worker.getValue().startsWith("loading") ? "loading" : busy ? "leased" : "idle");
         }).toList();
         return new DeckState(props.serverName(), Implementation.STUB, modelProfiles().getProfiles(), recent())
                 .workers(workers).spendUsd(0.0);
@@ -162,36 +175,36 @@ public class StubServer extends AbstractDeckServer {
     @Override
     public StreamingResponseBody chat(final String leaseId, final @Nullable String providerAuthorization, final JsonNode request) {
         final var lease = activeRecord(leaseId);
-        final var d = def(lease.profileId);
-        final var maxTokens = (int) Math.max(1, Math.min(Json.number(request.path("max_tokens")) == 0 ? 40
+        final var profile = def(lease.profileId);
+        final var maxTokens = (int) Math.max(1, Math.min(Json.number(request.path("max_tokens")) == 0 ? DEFAULT_MAX_TOKENS
                 : Json.number(request.path("max_tokens")), WORDS.length));
         final var includeUsage = Json.bool(request.path("stream_options").path("include_usage"));
         final var prompt = Json.promptTokens(request);
-        final var speed = speedAt(d, prompt);
+        final var speed = speedAt(profile, prompt);
         final StreamingResponseBody body = out -> {
-            final var deadline = System.currentTimeMillis() + 60_000;
+            final var deadline = System.currentTimeMillis() + LOADING_WAIT.toMillis();
             while (lease.state == LeaseState.LOADING && System.currentTimeMillis() < deadline) {
-                sleep(100);
+                sleep(LOADING_POLL_MS);
             }
-            sleep(scaled(d.ttftMs()) + Math.round(prompt * 1000.0 / speed.prefillTps() * stub.timeFactor()));
+            sleep(scaled(profile.ttftMs()) + Math.round(prompt * MILLIS_PER_SECOND / speed.prefillTps() * stub.timeFactor()));
             final var id = "chatcmpl-" + lease.id;
-            final var created = System.currentTimeMillis() / 1000;
-            for (int i = 0; i < maxTokens; i++) {
+            final var created = Instant.now().getEpochSecond();
+            for (int tokenIndex = 0; tokenIndex < maxTokens; tokenIndex++) {
                 final var chunk = mapper.createObjectNode();
-                chunk.put("id", id).put("object", "chat.completion.chunk").put("created", created).put("model", d.model());
+                chunk.put("id", id).put("object", "chat.completion.chunk").put("created", created).put("model", profile.model());
                 final var choice = chunk.putArray("choices").addObject();
                 choice.put("index", 0);
                 final var delta = choice.putObject("delta");
-                if (i == 0) {
+                if (tokenIndex == 0) {
                     delta.put("role", "assistant");
                 }
-                delta.put("content", WORDS[i] + " ");
+                delta.put("content", WORDS[tokenIndex] + " ");
                 choice.putNull("finish_reason");
                 write(out, chunk.toString());
-                sleep(Math.round(1000.0 / speed.decodeTps() * stub.timeFactor()));
+                sleep(Math.round(MILLIS_PER_SECOND / speed.decodeTps() * stub.timeFactor()));
             }
             final var last = mapper.createObjectNode();
-            last.put("id", id).put("object", "chat.completion.chunk").put("created", created).put("model", d.model());
+            last.put("id", id).put("object", "chat.completion.chunk").put("created", created).put("model", profile.model());
             final var choice = last.putArray("choices").addObject();
             choice.put("index", 0);
             choice.putObject("delta");
@@ -199,11 +212,11 @@ public class StubServer extends AbstractDeckServer {
             write(out, last.toString());
             if (includeUsage) {
                 final var usage = mapper.createObjectNode();
-                usage.put("id", id).put("object", "chat.completion.chunk").put("created", created).put("model", d.model());
+                usage.put("id", id).put("object", "chat.completion.chunk").put("created", created).put("model", profile.model());
                 usage.putArray("choices");
-                final var u = usage.putObject("usage");
-                u.put("prompt_tokens", prompt).put("completion_tokens", maxTokens).put("total_tokens", prompt + maxTokens);
-                u.putObject("prompt_tokens_details").put("cached_tokens", 0);
+                final var counts = usage.putObject("usage");
+                counts.put("prompt_tokens", prompt).put("completion_tokens", maxTokens).put("total_tokens", prompt + maxTokens);
+                counts.putObject("prompt_tokens_details").put("cached_tokens", 0);
                 write(out, usage.toString());
             }
             lease.addUsage(prompt, 0, maxTokens, false);
@@ -221,7 +234,7 @@ public class StubServer extends AbstractDeckServer {
     private static void sleep(final long ms) {
         try {
             Thread.sleep(Math.max(0, ms));
-        } catch (InterruptedException e) {
+        } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
         }
     }

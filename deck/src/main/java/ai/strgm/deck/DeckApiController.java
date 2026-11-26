@@ -8,8 +8,8 @@ import ai.strgm.deck.api.model.ModelProfiles;
 import ai.strgm.deck.api.server.LeasesApi;
 import ai.strgm.deck.api.server.MetricsApi;
 import ai.strgm.deck.api.server.ModelProfilesApi;
+import java.net.URI;
 import org.jspecify.annotations.Nullable;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -29,7 +29,9 @@ public class DeckApiController implements ModelProfilesApi, LeasesApi, MetricsAp
 
     @Override
     public ResponseEntity<Lease> acquireLease(final LeaseRequest leaseRequest) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(server.acquire(leaseRequest.getProfileId(), leaseRequest.getSessionRef()));
+        final var acquired = server.acquire(leaseRequest.getProfileId(), leaseRequest.getSessionRef());
+        final var lease = acquired.lease();
+        return acquired.created() ? ResponseEntity.created(URI.create("/leases/" + lease.getId())).body(lease) : ResponseEntity.ok(lease);
     }
 
     @Override

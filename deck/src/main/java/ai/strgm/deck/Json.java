@@ -4,27 +4,30 @@ import tools.jackson.databind.JsonNode;
 
 /** Reading the fields of OpenAI-style requests and chunks. */
 public final class Json {
+    /** A rough estimate of the characters in one token. */
+    public static final int CHARS_PER_TOKEN = 4;
+
     private Json() {}
 
-    public static String text(final JsonNode n) {
-        return n == null || n.isMissingNode() || n.isNull() ? "" : n.isValueNode() ? n.asString() : n.toString();
+    public static String text(final JsonNode node) {
+        return node == null || node.isMissingNode() || node.isNull() ? "" : node.isValueNode() ? node.asString() : node.toString();
     }
 
-    public static long number(final JsonNode n) {
-        return n != null && n.isNumber() ? n.longValue() : 0;
+    public static long number(final JsonNode node) {
+        return node != null && node.isNumber() ? node.longValue() : 0;
     }
 
-    public static boolean bool(final JsonNode n) {
-        return n != null && n.isBoolean() && n.booleanValue();
+    public static boolean bool(final JsonNode node) {
+        return node != null && node.isBoolean() && node.booleanValue();
     }
 
-    /** Rough token estimate: characters / 4. */
+    /** A rough token estimate: characters / {@value #CHARS_PER_TOKEN}. */
     public static long promptTokens(final JsonNode request) {
         final var messages = request.path("messages");
         long chars = 0;
-        for (int i = 0; i < messages.size(); i++) {
-            chars += text(messages.get(i).path("content")).length();
+        for (int messageIndex = 0; messageIndex < messages.size(); messageIndex++) {
+            chars += text(messages.get(messageIndex).path("content")).length();
         }
-        return Math.max(1, chars / 4);
+        return Math.max(1, chars / CHARS_PER_TOKEN);
     }
 }

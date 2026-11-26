@@ -29,6 +29,9 @@ import java.util.Map;
 @Route("")
 @PageTitle("DEALER + DECK")
 public class DashboardView extends VerticalLayout {
+    /** How often the browser asks for fresh metrics. */
+    private static final long REFRESH_INTERVAL_MS = 1000;
+    private static final double MILLIS_PER_SECOND = 1000.0;
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault());
 
     private final Clients clients;
@@ -50,15 +53,15 @@ public class DashboardView extends VerticalLayout {
         sessions.addColumn(SessionInfo::getClient).setHeader("Client").setAutoWidth(true);
         sessions.addColumn(SessionInfo::getSessionId).setHeader("Session").setAutoWidth(true);
         sessions.addColumn(SessionInfo::getModel).setHeader("Model").setAutoWidth(true);
-        sessions.addColumn(s -> s.getDeckServer() == null ? "-" : s.getDeckServer() + " (" + s.getServerType().getValue() + ")").setHeader("DECK server").setAutoWidth(true);
-        sessions.addColumn(s -> s.getProfileId() == null ? "-" : s.getProfileId()).setHeader("Profile").setAutoWidth(true);
+        sessions.addColumn(session -> session.getDeckServer() == null ? "-" : session.getDeckServer() + " (" + session.getServerType().getValue() + ")").setHeader("DECK server").setAutoWidth(true);
+        sessions.addColumn(session -> session.getProfileId() == null ? "-" : session.getProfileId()).setHeader("Profile").setAutoWidth(true);
         sessions.addColumn(SessionInfo::getLeaseState).setHeader("Lease").setAutoWidth(true);
-        sessions.addColumn(s -> seconds(s.getLeaseAgeMs())).setHeader("Lease age").setAutoWidth(true);
-        sessions.addColumn(s -> seconds(s.getIdleMs())).setHeader("Idle").setAutoWidth(true);
+        sessions.addColumn(session -> seconds(session.getLeaseAgeMs())).setHeader("Lease age").setAutoWidth(true);
+        sessions.addColumn(session -> seconds(session.getIdleMs())).setHeader("Idle").setAutoWidth(true);
         sessions.addColumn(SessionInfo::getRequests).setHeader("Requests").setAutoWidth(true);
-        sessions.addColumn(s -> s.getPromptTokens() + " / " + s.getCachedTokens() + " / " + s.getCompletionTokens())
+        sessions.addColumn(session -> session.getPromptTokens() + " / " + session.getCachedTokens() + " / " + session.getCompletionTokens())
                 .setHeader("Tokens (prompt / cached / completion)").setAutoWidth(true);
-        sessions.addColumn(s -> String.format("$%.6f", s.getCostUsd() == null ? 0 : s.getCostUsd())).setHeader("Cost").setAutoWidth(true);
+        sessions.addColumn(session -> String.format("$%.6f", session.getCostUsd() == null ? 0 : session.getCostUsd())).setHeader("Cost").setAutoWidth(true);
         sessions.setAllRowsVisible(true);
 
         queue.addColumn(QueuedRequest::getClient).setHeader("Client");
@@ -66,20 +69,20 @@ public class DashboardView extends VerticalLayout {
         queue.addColumn(QueuedRequest::getModel).setHeader("Model");
         queue.addColumn(QueuedRequest::getClientPriority).setHeader("Client priority");
         queue.addColumn(QueuedRequest::getRequestPriority).setHeader("Request priority");
-        queue.addColumn(q -> seconds(q.getWaitingMs())).setHeader("Waiting");
-        queue.addColumn(q -> q.getReservedProfile() == null ? "-" : q.getReservedProfile()).setHeader("Reserved (draining)");
+        queue.addColumn(request -> seconds(request.getWaitingMs())).setHeader("Waiting");
+        queue.addColumn(request -> request.getReservedProfile() == null ? "-" : request.getReservedProfile()).setHeader("Reserved (draining)");
         queue.setAllRowsVisible(true);
 
-        evictions.addColumn(e -> TIME.format(Instant.ofEpochSecond(e.getCreatedAt()))).setHeader("Time").setAutoWidth(true);
-        evictions.addColumn(e -> e.getVictimClient() + " / " + e.getVictimSession()).setHeader("Evicted").setAutoWidth(true);
-        evictions.addColumn(e -> e.getDeckServer() + "/" + e.getProfileId()).setHeader("From").setAutoWidth(true);
+        evictions.addColumn(eviction -> TIME.format(Instant.ofEpochSecond(eviction.getCreatedAt()))).setHeader("Time").setAutoWidth(true);
+        evictions.addColumn(eviction -> eviction.getVictimClient() + " / " + eviction.getVictimSession()).setHeader("Evicted").setAutoWidth(true);
+        evictions.addColumn(eviction -> eviction.getDeckServer() + "/" + eviction.getProfileId()).setHeader("From").setAutoWidth(true);
         evictions.addColumn(EvictionEvent::getByClient).setHeader("For").setAutoWidth(true);
         evictions.addColumn(EvictionEvent::getReason).setHeader("Why").setAutoWidth(true);
         evictions.setAllRowsVisible(true);
 
         clientGrid.addColumn(ClientInfo::getName).setHeader("Client");
         clientGrid.addColumn(ClientInfo::getPriority).setHeader("Priority");
-        clientGrid.addColumn(c -> Boolean.TRUE.equals(c.getExternalRouting()) ? "allowed" : "local only").setHeader("External routing");
+        clientGrid.addColumn(client -> Boolean.TRUE.equals(client.getExternalRouting()) ? "allowed" : "local only").setHeader("External routing");
         clientGrid.setAllRowsVisible(true);
 
         add(new H3("Sessions and leases"), sessions, new H3("Queue"), queue, new H3("Evictions"), evictions);
@@ -88,14 +91,14 @@ public class DashboardView extends VerticalLayout {
         clients.decks.keySet().forEach(name -> {
             final var profiles = new Grid<ModelProfile>();
             profiles.addColumn(ModelProfile::getId).setHeader("Profile").setAutoWidth(true);
-            profiles.addColumn(p -> p.getReadiness().getValue() + (p.getReadiness() != Readiness.UNLOADED || p.getLoadingTimeMs() == null
-                    ? "" : " (" + seconds(p.getLoadingTimeMs().longValue()) + " to load)")).setHeader("Readiness").setAutoWidth(true);
-            profiles.addColumn(p -> (p.getActiveLeases() == null ? 0 : p.getActiveLeases()) + " / " + (p.getMaxLeases() == null ? "∞" : p.getMaxLeases())).setHeader("Leases / budget").setAutoWidth(true);
+            profiles.addColumn(profile -> profile.getReadiness().getValue() + (profile.getReadiness() != Readiness.UNLOADED || profile.getLoadingTimeMs() == null
+                    ? "" : " (" + seconds(profile.getLoadingTimeMs().longValue()) + " to load)")).setHeader("Readiness").setAutoWidth(true);
+            profiles.addColumn(profile -> (profile.getActiveLeases() == null ? 0 : profile.getActiveLeases()) + " / " + (profile.getMaxLeases() == null ? "∞" : profile.getMaxLeases())).setHeader("Leases / budget").setAutoWidth(true);
             profiles.addColumn(ModelProfile::getContextWindow).setHeader("Window").setAutoWidth(true);
-            profiles.addColumn(p -> p.getLimitations() == null || p.getLimitations().getLeaseReductions() == null
-                    || p.getLimitations().getLeaseReductions().isEmpty() ? "-"
-                    : String.join(", ", p.getLimitations().getLeaseReductions().stream()
-                            .map(r -> r.getProfileId() + " \u2212" + r.getLeases()).toList())).setHeader("Lease reductions").setAutoWidth(true);
+            profiles.addColumn(profile -> profile.getLimitations() == null || profile.getLimitations().getLeaseReductions() == null
+                    || profile.getLimitations().getLeaseReductions().isEmpty() ? "-"
+                    : String.join(", ", profile.getLimitations().getLeaseReductions().stream()
+                            .map(reduction -> reduction.getProfileId() + " \u2212" + reduction.getLeases()).toList())).setHeader("Lease reductions").setAutoWidth(true);
             profiles.setAllRowsVisible(true);
             final var workers = new Grid<Worker>();
             workers.addColumn(Worker::getId).setHeader("Worker");
@@ -121,7 +124,7 @@ public class DashboardView extends VerticalLayout {
         apply(fetch());
         // A browser-side timer calls tick() every second; each response carries the grid updates.
         getElement().executeJs("const el = $0; clearInterval(el.__dealerTimer);"
-                + " el.__dealerTimer = setInterval(() => el.$server.tick(), 1000);", getElement());
+                + " el.__dealerTimer = setInterval(() => el.$server.tick(), " + REFRESH_INTERVAL_MS + ");", getElement());
     }
 
     @Override
@@ -140,14 +143,14 @@ public class DashboardView extends VerticalLayout {
         String error = null;
         try {
             dealer = clients.dealer.getDealerState().getBody();
-        } catch (Exception e) {
-            error = e.getMessage();
+        } catch (Exception exception) {
+            error = exception.getMessage();
         }
         final Map<String, ai.strgm.deck.api.model.DeckState> decks = new LinkedHashMap<>();
         clients.decks.forEach((name, api) -> {
             try {
                 decks.put(name, api.getDeckState().getBody());
-            } catch (Exception e) {
+            } catch (Exception exception) {
                 decks.put(name, null);
             }
         });
@@ -182,6 +185,6 @@ public class DashboardView extends VerticalLayout {
     }
 
     private static String seconds(final Long ms) {
-        return ms == null ? "-" : String.format("%.1f s", ms / 1000.0);
+        return ms == null ? "-" : String.format("%.1f s", ms / MILLIS_PER_SECOND);
     }
 }

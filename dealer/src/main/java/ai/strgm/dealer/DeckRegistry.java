@@ -5,6 +5,7 @@ import ai.strgm.deck.api.client.ModelProfilesApi;
 import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseRequest;
 import ai.strgm.deck.api.model.ModelProfile;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -12,6 +13,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import org.jspecify.annotations.Nullable;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -24,6 +26,11 @@ import tools.jackson.databind.ObjectMapper;
 /** The configured DECK servers, called only through the clients generated from the DECK OpenAPI document. */
 @Component
 public class DeckRegistry {
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(2);
+    private static final Duration READ_TIMEOUT = Duration.ofSeconds(10);
+    /** How often DEALER refreshes every DECK server's model profiles. */
+    private static final long REFRESH_INTERVAL_MS = 1000;
+
 
     public record Server(DealerProperties.ServerDef def, ModelProfilesApi modelProfiles, LeasesApi leases,
             @Nullable String providerAuthorization) {
@@ -65,8 +72,8 @@ public class DeckRegistry {
         this.mapper = mapper;
         for (final var def : props.servers()) {
             final var requests = new SimpleClientHttpRequestFactory();
-            requests.setConnectTimeout(2000);
-            requests.setReadTimeout(10000);
+            requests.setConnectTimeout(CONNECT_TIMEOUT);
+            requests.setReadTimeout(READ_TIMEOUT);
             final var rest = RestClient.builder().requestFactory(requests).baseUrl(def.url())
                     .defaultHeader("Authorization", "Bearer " + def.key()).build();
             final var factory = HttpServiceProxyFactory.builderFor(RestClientAdapter.create(rest)).build();
@@ -77,17 +84,17 @@ public class DeckRegistry {
         refresh();
     }
 
-    @Scheduled(fixedDelay = 1000)
+    @Scheduled(fixedDelay = REFRESH_INTERVAL_MS)
     public void refresh() {
         final List<ProfileRef> next = new ArrayList<>();
-        for (final var s : servers.values()) {
+        for (final var server : servers.values()) {
             try {
-                final var offered = Objects.requireNonNull(s.modelProfiles().getModelProfiles().getBody(), "no model profiles in the response");
-                offered.getProfiles().forEach(p -> next.add(new ProfileRef(s, p)));
-                reachable.put(s.name(), true);
-            } catch (Exception e) {
-                reachable.put(s.name(), false);
-                profiles.stream().filter(p -> p.server() == s).forEach(next::add);
+                final var offered = Objects.requireNonNull(server.modelProfiles().getModelProfiles().getBody(), "no model profiles in the response");
+                offered.getProfiles().forEach(profile -> next.add(new ProfileRef(server, profile)));
+                reachable.put(server.name(), true);
+            } catch (Exception exception) {
+                reachable.put(server.name(), false);
+                profiles.stream().filter(profileRef -> profileRef.server() == server).forEach(next::add);
             }
         }
         profiles = List.copyOf(next);
@@ -105,38 +112,38 @@ public class DeckRegistry {
         return reachable.getOrDefault(server, false);
     }
 
-    public Lease acquire(final ProfileRef p, final String sessionRef) throws Blocked {
+    public Lease acquire(final ProfileRef profileRef, final String sessionRef) throws Blocked {
         try {
-            return Objects.requireNonNull(p.server().leases().acquireLease(new LeaseRequest(p.profile().getId(), sessionRef)).getBody(),
+            return Objects.requireNonNull(profileRef.server().leases().acquireLease(new LeaseRequest(profileRef.profile().getId(), sessionRef)).getBody(),
                     "no lease in the response");
-        } catch (HttpClientErrorException e) {
-            if (e.getStatusCode().value() == 409) {
-                final var node = mapper.readTree(e.getResponseBodyAsString()).path("blockers");
+        } catch (HttpClientErrorException exception) {
+            if (exception.getStatusCode().isSameCodeAs(HttpStatus.CONFLICT)) {
+                final var node = mapper.readTree(exception.getResponseBodyAsString()).path("blockers");
                 final List<String> blockers = new ArrayList<>();
-                for (int i = 0; i < node.size(); i++) {
-                    blockers.add(node.get(i).asString());
+                for (int blockerIndex = 0; blockerIndex < node.size(); blockerIndex++) {
+                    blockers.add(node.get(blockerIndex).asString());
                 }
                 throw new Blocked(blockers);
             }
-            throw e;
+            throw exception;
         }
     }
 
-    public Lease lease(final Server s, final String leaseId) {
-        return Objects.requireNonNull(s.leases().getLease(leaseId).getBody(), "no lease in the response");
+    public Lease lease(final Server server, final String leaseId) {
+        return Objects.requireNonNull(server.leases().getLease(leaseId).getBody(), "no lease in the response");
     }
 
-    public void release(final Server s, final String leaseId) {
+    public void release(final Server server, final String leaseId) {
         try {
-            s.leases().releaseLease(leaseId);
+            server.leases().releaseLease(leaseId);
         } catch (Exception ignored) {
             // the lease may already be gone
         }
     }
 
-    public void evict(final Server s, final String leaseId) {
+    public void evict(final Server server, final String leaseId) {
         try {
-            s.leases().evictLease(leaseId);
+            server.leases().evictLease(leaseId);
         } catch (Exception ignored) {
             // the lease may already be gone
         }

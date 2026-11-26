@@ -5,6 +5,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -29,7 +30,7 @@ public class AuthFilter extends OncePerRequestFilter {
             final FilterChain chain) throws ServletException, IOException {
         final var header = request.getHeader("Authorization");
         if (header == null || !header.equals("Bearer " + props.apiKey())) {
-            response.setStatus(401);
+            response.setStatus(HttpStatus.UNAUTHORIZED.value());
             response.setContentType("application/json");
             response.getWriter().write("{\"error\":{\"message\":\"Missing or invalid DECK key\",\"type\":\"authentication_error\"}}");
             return;
