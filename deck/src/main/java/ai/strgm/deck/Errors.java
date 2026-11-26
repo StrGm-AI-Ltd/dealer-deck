@@ -92,9 +92,28 @@ public class Errors extends ResponseEntityExceptionHandler {
     protected ResponseEntity<Object> handleHttpMessageNotReadable(final HttpMessageNotReadableException exception,
             final HttpHeaders headers, final HttpStatusCode status, final WebRequest request) {
         final var cause = exception.getMostSpecificCause();
-        return invalid(status, cause instanceof StreamReadException ? "The request body isn't valid JSON"
-                : cause instanceof JacksonException ? "The request body doesn't match the expected schema"
-                : "The request body is missing or unreadable", null);
+        if (cause instanceof StreamReadException) {
+            return invalid(status, "The request body isn't valid JSON", null);
+        }
+        if (cause instanceof JacksonException mismatch) {
+            final var field = field(mismatch);
+            return invalid(status, field == null ? "The request body doesn't match the expected schema"
+                    : "The request body doesn't match the expected schema at " + field, field);
+        }
+        return invalid(status, "The request body is missing or unreadable", null);
+    }
+
+    /** Where in the body the value Jackson couldn't read is, e.g. {@code messages[0].role}; null if Jackson didn't say. */
+    private static @Nullable String field(final JacksonException exception) {
+        final var path = new StringBuilder();
+        for (final var reference : exception.getPath()) {
+            if (reference.getPropertyName() != null) {
+                path.append(path.isEmpty() ? "" : ".").append(reference.getPropertyName());
+            } else if (reference.getIndex() >= 0) {
+                path.append('[').append(reference.getIndex()).append(']');
+            }
+        }
+        return path.isEmpty() ? null : path.toString();
     }
 
     @Override

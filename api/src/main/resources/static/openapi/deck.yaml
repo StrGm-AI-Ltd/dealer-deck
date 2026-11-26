@@ -134,7 +134,9 @@ paths:
                 loading:
                   $ref: '#/components/examples/LeaseLoading'
         '400':
-          description: The body is missing, isn't valid JSON, or lacks `profileId` or `sessionRef`
+          description: >-
+            The body is missing, isn't valid JSON, lacks `profileId` or `sessionRef`, or has a value of the wrong
+            type; `param` names the field
           content:
             application/json:
               schema:
@@ -142,6 +144,8 @@ paths:
               examples:
                 missingField:
                   $ref: '#/components/examples/MissingRequiredField'
+                wrongType:
+                  $ref: '#/components/examples/SchemaMismatch'
                 invalidJson:
                   $ref: '#/components/examples/InvalidJson'
         '401':
@@ -439,6 +443,10 @@ components:
       summary: The body isn't valid JSON
       value:
         error: {message: "The request body isn't valid JSON", type: invalid_request_error, code: null, param: null}
+    SchemaMismatch:
+      summary: A field has a value of the wrong type
+      value:
+        error: {message: The request body doesn't match the expected schema at profileId, type: invalid_request_error, code: null, param: profileId}
     MissingRequiredField:
       summary: A required field is missing
       value:
