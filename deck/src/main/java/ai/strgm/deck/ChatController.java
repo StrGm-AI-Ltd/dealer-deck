@@ -37,7 +37,7 @@ public class ChatController {
         final JsonNode request;
         try {
             request = mapper.readTree(body);
-        } catch (JacksonException e) {
+        } catch (JacksonException exception) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "The request body isn't valid JSON");
         }
         if (!Json.bool(request.path("stream"))) {

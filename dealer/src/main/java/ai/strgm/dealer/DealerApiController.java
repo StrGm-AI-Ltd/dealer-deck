@@ -17,7 +17,6 @@ import org.springframework.web.bind.annotation.RestController;
 /** Implements the interfaces generated from the DEALER OpenAPI document (D99, D102). */
 @RestController
 public class DealerApiController implements ModelsApi, MetricsApi {
-    private static final List<Integer> TIERS = List.of(32768, 65536, 131072);
     private final DeckRegistry decks;
     private final Scheduler scheduler;
     private final DealerProperties props;
@@ -34,24 +33,25 @@ public class DealerApiController implements ModelsApi, MetricsApi {
     @Override
     public ResponseEntity<ModelList> listModels() {
         final List<Model> data = new ArrayList<>();
-        for (final var window : TIERS) {
-            data.add(new Model("auto-" + (window / 1024 == 64 ? 65 : window / 1024) + "k", "model", startedAt, "dealer")
-                    .contextWindow(window).virtual(true));
+        for (final var tier : AutoTier.ALL) {
+            data.add(new Model(tier.name(), "model", startedAt, "dealer").contextWindow(tier.contextWindow()).virtual(true));
         }
-        decks.profiles().forEach(p -> data.add(new Model(p.profile().getId(), "model", startedAt, p.server().name())
-                .deckServer(p.server().name()).serverType(ServerType.fromValue(p.server().def().egress()))
-                .contextWindow(p.profile().getContextWindow()).virtual(false)));
+        decks.profiles().forEach(profileRef -> data.add(new Model(profileRef.profile().getId(), "model", startedAt,
+                profileRef.server().name()).deckServer(profileRef.server().name())
+                .serverType(ServerType.fromValue(profileRef.server().def().egress()))
+                .contextWindow(profileRef.profile().getContextWindow()).virtual(false)));
         return ResponseEntity.ok(new ModelList("list", data));
     }
 
     @Override
     public ResponseEntity<DealerState> getDealerState() {
         final var clients = props.clients().stream()
-                .map(c -> new ClientInfo().name(c.name()).priority(c.priority()).externalRouting(c.externalRouting())).toList();
+                .map(client -> new ClientInfo().name(client.name()).priority(client.priority()).externalRouting(client.externalRouting()))
+                .toList();
         final var servers = decks.servers().values().stream()
-                .map(s -> new ServerInfo().name(s.name()).url(s.def().url()).serverType(ServerType.fromValue(s.def().egress()))
-                        .reachable(decks.reachable(s.name()))
-                        .profiles((int) decks.profiles().stream().filter(p -> p.server() == s).count()))
+                .map(server -> new ServerInfo().name(server.name()).url(server.def().url())
+                        .serverType(ServerType.fromValue(server.def().egress())).reachable(decks.reachable(server.name()))
+                        .profiles((int) decks.profiles().stream().filter(profileRef -> profileRef.server() == server).count()))
                 .toList();
         return ResponseEntity.ok(new DealerState().clients(clients).servers(servers).queue(scheduler.queue())
                 .sessions(scheduler.sessions()).evictions(scheduler.evictions()));

@@ -33,7 +33,18 @@ import tools.jackson.databind.node.ObjectNode;
 public class ChatController {
     private final Scheduler scheduler;
     private final ObjectMapper mapper;
-    private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
+    /** How long one completion may take, streaming included. */
+    private static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(5);
+    private static final int MAX_SESSION_ID_LENGTH = 200;
+    /** {@code X-Request-Priority}'s range and default, as {@code dealer.yaml} documents them. */
+    private static final int MIN_PRIORITY = 1;
+    private static final int MAX_PRIORITY = 100;
+    private static final int DEFAULT_PRIORITY = 50;
+    /** The prefix of a server-sent event's data line. */
+    private static final String SSE_DATA_PREFIX = "data:";
+
+    private final HttpClient http = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
 
     public ChatController(final Scheduler scheduler, final ObjectMapper mapper) {
         this.scheduler = scheduler;
@@ -52,18 +63,18 @@ public class ChatController {
         final JsonNode body;
         try {
             body = mapper.readTree(raw);
-        } catch (JacksonException e) {
+        } catch (JacksonException exception) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "The request body isn't valid JSON");
         }
         if (!(body.path("stream").isBoolean() && body.path("stream").booleanValue())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "DEALER streams only in v0.5: set \"stream\": true");
         }
-        if (sessionId == null || sessionId.isBlank() || sessionId.length() > 200) {
+        if (sessionId == null || sessionId.isBlank() || sessionId.length() > MAX_SESSION_ID_LENGTH) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "Missing or invalid required header X-Session-Id");
         }
-        if (requestPriority != null && (requestPriority < 1 || requestPriority > 100)) {
+        if (requestPriority != null && (requestPriority < MIN_PRIORITY || requestPriority > MAX_PRIORITY)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error",
-                    "X-Request-Priority must be between 1 and 100", "X-Request-Priority");
+                    "X-Request-Priority must be between " + MIN_PRIORITY + " and " + MAX_PRIORITY, "X-Request-Priority");
         }
         final var model = body.path("model").isString() ? body.path("model").asString() : "";
         if (model.isBlank()) {
@@ -74,7 +85,7 @@ public class ChatController {
                     "No DECK profile serves \"" + model + "\" for client " + client.name()
                             + (client.externalRouting() ? "" : " (external routing is off for this client)"));
         }
-        final var priority = requestPriority == null ? 50 : requestPriority;
+        final var priority = requestPriority == null ? DEFAULT_PRIORITY : requestPriority;
         final var placement = scheduler.acquire(client, sessionId, model, priority);
         final var server = placement.profile().server();
         final var forward = (ObjectNode) body.deepCopy();
@@ -86,7 +97,7 @@ public class ChatController {
                 .header("Authorization", "Bearer " + server.def().key())
                 .header("X-Lease-Id", placement.leaseId())
                 .header("Content-Type", "application/json")
-                .timeout(Duration.ofMinutes(5))
+                .timeout(REQUEST_TIMEOUT)
                 .POST(HttpRequest.BodyPublishers.ofString(forward.toString()));
         if (server.providerAuthorization() != null) {
             request.header("X-Provider-Authorization", server.providerAuthorization());
@@ -94,19 +105,19 @@ public class ChatController {
         final HttpResponse<InputStream> response;
         try {
             response = http.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
-        } catch (Exception e) {
+        } catch (Exception exception) {
             scheduler.release(placement, 0, 0, 0);
-            if (e instanceof InterruptedException) {
+            if (exception instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", "DECK server " + server.name() + " unreachable");
         }
-        if (response.statusCode() != 200) {
+        if (response.statusCode() != HttpStatus.OK.value()) {
             scheduler.release(placement, 0, 0, 0);
             String text;
             try (var in = response.body()) {
                 text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-            } catch (Exception e) {
+            } catch (Exception exception) {
                 text = "";
             }
             throw new ApiException(HttpStatus.valueOf(response.statusCode()), text.isBlank()
@@ -120,8 +131,8 @@ public class ChatController {
             try (var reader = new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    if (line.startsWith("data:")) {
-                        final var data = line.substring(5).trim();
+                    if (line.startsWith(SSE_DATA_PREFIX)) {
+                        final var data = line.substring(SSE_DATA_PREFIX.length()).trim();
                         if (data.startsWith("{")) {
                             final var chunk = mapper.readTree(data);
                             final var usage = chunk.path("usage");
@@ -157,7 +168,7 @@ public class ChatController {
                 .body(stream);
     }
 
-    private static long number(final JsonNode n) {
-        return n.isNumber() ? n.longValue() : 0;
+    private static long number(final JsonNode node) {
+        return node.isNumber() ? node.longValue() : 0;
     }
 }

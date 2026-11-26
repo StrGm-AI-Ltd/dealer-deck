@@ -48,43 +48,43 @@ public class Errors extends ResponseEntityExceptionHandler {
     }
 
     /** An exception's message, or its class name when it has none. */
-    private static String message(final Throwable e) {
-        final var m = e.getMessage();
-        return m != null ? m : e.getClass().getSimpleName();
+    private static String message(final Throwable exception) {
+        final var message = exception.getMessage();
+        return message != null ? message : exception.getClass().getSimpleName();
     }
 
     @ExceptionHandler(UpstreamException.class)
-    public ResponseEntity<String> handle(final UpstreamException e) {
-        final var b = ResponseEntity.status(e.status).contentType(MediaType.APPLICATION_JSON);
-        if (e.retryAfter != null) {
-            b.header("Retry-After", e.retryAfter);
+    public ResponseEntity<String> handle(final UpstreamException exception) {
+        final var response = ResponseEntity.status(exception.status).contentType(MediaType.APPLICATION_JSON);
+        if (exception.retryAfter != null) {
+            response.header("Retry-After", exception.retryAfter);
         }
-        return b.body(e.body);
+        return response.body(exception.body);
     }
 
     @ExceptionHandler(ApiException.class)
-    public ResponseEntity<Object> handle(final ApiException e) {
-        final var blockers = e.blockers;
+    public ResponseEntity<Object> handle(final ApiException exception) {
+        final var blockers = exception.blockers;
         if (blockers != null) {
-            return ResponseEntity.status(e.status).contentType(MediaType.APPLICATION_JSON)
-                    .body(new LeaseConflict(new ErrorBody(message(e), e.type), blockers));
+            return ResponseEntity.status(exception.status).contentType(MediaType.APPLICATION_JSON)
+                    .body(new LeaseConflict(new ErrorBody(message(exception), exception.type), blockers));
         }
-        return of(e.status, e.type, message(e), null);
+        return of(exception.status, exception.type, message(exception), null);
     }
 
     /** A parameter outside its documented constraints, from method validation. */
     @ExceptionHandler(ConstraintViolationException.class)
-    public ResponseEntity<Object> handle(final ConstraintViolationException e) {
-        final var first = e.getConstraintViolations().stream().map(v -> v.getPropertyPath().toString())
+    public ResponseEntity<Object> handle(final ConstraintViolationException exception) {
+        final var first = exception.getConstraintViolations().stream().map(violation -> violation.getPropertyPath().toString())
                 .sorted().findFirst().orElse(null);
-        return invalid(HttpStatus.BAD_REQUEST, "Invalid request: " + e.getMessage(),
+        return invalid(HttpStatus.BAD_REQUEST, "Invalid request: " + exception.getMessage(),
                 first == null ? null : first.substring(first.lastIndexOf('.') + 1));
     }
 
     /** Anything else: a 500, without the exception's details, which are logged. */
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<Object> handle(final Exception e) {
-        log.error("Unhandled error", e);
+    public ResponseEntity<Object> handle(final Exception exception) {
+        log.error("Unhandled error", exception);
         return of(HttpStatus.INTERNAL_SERVER_ERROR, "server_error", "Internal server error", null);
     }
 
@@ -103,14 +103,14 @@ public class Errors extends ResponseEntityExceptionHandler {
         final var errors = ex.getBindingResult().getFieldErrors().stream()
                 .sorted(Comparator.comparing(FieldError::getField)).toList();
         return invalid(status, "Invalid request body: " + errors.stream()
-                .map(f -> f.getField() + " " + f.getDefaultMessage()).collect(Collectors.joining("; ")),
+                .map(fieldError -> fieldError.getField() + " " + fieldError.getDefaultMessage()).collect(Collectors.joining("; ")),
                 errors.isEmpty() ? null : errors.getFirst().getField());
     }
 
     @Override
     protected ResponseEntity<Object> handleTypeMismatch(final TypeMismatchException ex, final HttpHeaders headers,
             final HttpStatusCode status, final WebRequest request) {
-        final var name = ex instanceof MethodArgumentTypeMismatchException m ? m.getName() : ex.getPropertyName();
+        final var name = ex instanceof MethodArgumentTypeMismatchException mismatch ? mismatch.getName() : ex.getPropertyName();
         return invalid(status, "Invalid value for " + name + ": " + ex.getValue(), name);
     }
 
@@ -123,8 +123,8 @@ public class Errors extends ResponseEntityExceptionHandler {
     @Override
     protected ResponseEntity<Object> handleServletRequestBindingException(final ServletRequestBindingException ex,
             final HttpHeaders headers, final HttpStatusCode status, final WebRequest request) {
-        if (ex instanceof MissingRequestHeaderException m) {
-            return invalid(status, "Missing required header " + m.getHeaderName(), m.getHeaderName());
+        if (ex instanceof MissingRequestHeaderException missingHeader) {
+            return invalid(status, "Missing required header " + missingHeader.getHeaderName(), missingHeader.getHeaderName());
         }
         return invalid(status, message(ex), null);
     }
@@ -133,9 +133,9 @@ public class Errors extends ResponseEntityExceptionHandler {
     @Override
     protected ResponseEntity<Object> handleExceptionInternal(final Exception ex, final @Nullable Object body,
             final HttpHeaders headers, final HttpStatusCode status, final WebRequest request) {
-        final var type = status.value() == 404 ? "not_found" : status.is4xxClientError() ? "invalid_request_error" : "server_error";
-        final var detail = ex instanceof NoResourceFoundException n ? "Unknown path: /" + n.getResourcePath()
-                : ex instanceof org.springframework.web.ErrorResponse e ? e.getBody().getDetail() : null;
+        final var type = status.isSameCodeAs(HttpStatus.NOT_FOUND) ? "not_found" : status.is4xxClientError() ? "invalid_request_error" : "server_error";
+        final var detail = ex instanceof NoResourceFoundException noResource ? "Unknown path: /" + noResource.getResourcePath()
+                : ex instanceof org.springframework.web.ErrorResponse errorResponse ? errorResponse.getBody().getDetail() : null;
         final var message = detail != null ? detail : HttpStatus.valueOf(status.value()).getReasonPhrase();
         return ResponseEntity.status(status).headers(headers).contentType(MediaType.APPLICATION_JSON)
                 .body(new ErrorResponse(new ErrorBody(message, type)));

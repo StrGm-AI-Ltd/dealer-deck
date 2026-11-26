@@ -45,8 +45,13 @@ import tools.jackson.databind.node.ObjectNode;
 public class OpenAiCompatibleServer extends AbstractDeckServer {
     /** Prices are per million tokens. */
     private static final double TOKENS_PER_MILLION = 1_000_000.0;
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
+    /** How long one completion may take, streaming included. */
+    private static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(5);
+    /** The prefix of a server-sent event's data line. */
+    private static final String SSE_DATA_PREFIX = "data:";
 
-    private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+    private final HttpClient http = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
     private final UpstreamProperties upstream;
     private final String prefix;
 
@@ -58,18 +63,19 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
     }
 
     private UpstreamProperties.Model model(final String profileId) {
-        return upstream.models().stream().filter(m -> (prefix + m.model()).equals(profileId)).findFirst()
+        return upstream.models().stream().filter(upstreamModel -> (prefix + upstreamModel.model()).equals(profileId)).findFirst()
                 .orElseThrow(() -> unknownProfile(profileId));
     }
 
     private List<ModelProfile> profiles() {
         return upstream.models().stream()
-                .map(m -> new ModelProfile(prefix + m.model(), prefix + m.model(), m.contextWindow(),
-                        Readiness.LOADED).provider(upstream.provider()).limitations(new Limitations())
-                        .quantization(m.quantization() == null ? null : new Quantization(m.quantization()).bitsPerWeight(m.bitsPerWeight()))
-                        .maxLeases(m.maxLeases()).activeLeases(active(prefix + m.model()).size())
-                        .prices(new Prices().inputPerMTok(m.inputPerMTok()).cachedInputPerMTok(m.cachedInputPerMTok())
-                                .outputPerMTok(m.outputPerMTok())))
+                .map(upstreamModel -> new ModelProfile(prefix + upstreamModel.model(), prefix + upstreamModel.model(),
+                        upstreamModel.contextWindow(), Readiness.LOADED).provider(upstream.provider()).limitations(new Limitations())
+                        .quantization(upstreamModel.quantization() == null ? null
+                                : new Quantization(upstreamModel.quantization()).bitsPerWeight(upstreamModel.bitsPerWeight()))
+                        .maxLeases(upstreamModel.maxLeases()).activeLeases(active(prefix + upstreamModel.model()).size())
+                        .prices(new Prices().inputPerMTok(upstreamModel.inputPerMTok())
+                                .cachedInputPerMTok(upstreamModel.cachedInputPerMTok()).outputPerMTok(upstreamModel.outputPerMTok())))
                 .toList();
     }
 
@@ -115,9 +121,9 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
                     "Missing X-Provider-Authorization: this DECK server forwards the provider credential it receives (D104)");
         }
         final var lease = activeRecord(leaseId);
-        final var m = model(lease.profileId);
+        final var upstreamModel = model(lease.profileId);
         final var body = (ObjectNode) request.deepCopy();
-        body.put("model", m.model());
+        body.put("model", upstreamModel.model());
         body.put("stream", true);
         body.putObject("stream_options").put("include_usage", true);
         final var base = upstream.baseUrl().endsWith("/") ? upstream.baseUrl() : upstream.baseUrl() + "/";
@@ -125,30 +131,31 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
                 .header("Authorization", providerAuthorization)
                 .header("Content-Type", "application/json")
                 .header("Accept", "text/event-stream")
-                .timeout(Duration.ofMinutes(5))
+                .timeout(REQUEST_TIMEOUT)
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .build();
         final var name = "Provider " + upstream.provider();
         final HttpResponse<java.io.InputStream> response;
         try {
             response = http.send(upstreamRequest, HttpResponse.BodyHandlers.ofInputStream());
-        } catch (Exception e) {
-            if (e instanceof InterruptedException) {
+        } catch (Exception exception) {
+            if (exception instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
-            throw new ApiException(HttpStatus.GATEWAY_TIMEOUT, "upstream_error", name + " unreachable: " + e.getMessage());
+            throw new ApiException(HttpStatus.GATEWAY_TIMEOUT, "upstream_error", name + " unreachable: " + exception.getMessage());
         }
-        if (response.statusCode() != 200) {
+        if (response.statusCode() != HttpStatus.OK.value()) {
             final String text;
             try (var in = response.body()) {
                 text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-            } catch (Exception e) {
+            } catch (Exception exception) {
                 throw new ApiException(HttpStatus.BAD_GATEWAY, "upstream_error", name + " error " + response.statusCode());
             }
-            final var status = switch (response.statusCode()) {
-                case 429 -> HttpStatus.TOO_MANY_REQUESTS;
-                case 401, 403 -> HttpStatus.UNAUTHORIZED;
-                case 400, 404, 422 -> HttpStatus.BAD_REQUEST;
+            final var upstreamStatus = HttpStatus.resolve(response.statusCode());
+            final var status = upstreamStatus == null ? HttpStatus.SERVICE_UNAVAILABLE : switch (upstreamStatus) {
+                case TOO_MANY_REQUESTS -> HttpStatus.TOO_MANY_REQUESTS;
+                case UNAUTHORIZED, FORBIDDEN -> HttpStatus.UNAUTHORIZED;
+                case BAD_REQUEST, NOT_FOUND, UNPROCESSABLE_CONTENT -> HttpStatus.BAD_REQUEST;
                 default -> HttpStatus.SERVICE_UNAVAILABLE;
             };
             throw new UpstreamException(status, text.isBlank() ? "{\"error\":{\"message\":\"" + name + " error "
@@ -162,8 +169,8 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
             try (var reader = new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    if (line.startsWith("data:")) {
-                        final var data = line.substring(5).trim();
+                    if (line.startsWith(SSE_DATA_PREFIX)) {
+                        final var data = line.substring(SSE_DATA_PREFIX.length()).trim();
                         if (!data.equals("[DONE]") && data.startsWith("{")) {
                             final var chunk = mapper.readTree(data);
                             final var usage = chunk.path("usage");
@@ -174,8 +181,8 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
                                         Json.number(usage.path("completion_tokens")), false);
                             }
                             final var choices = chunk.path("choices");
-                            for (int i = 0; i < choices.size(); i++) {
-                                chars += Json.text(choices.get(i).path("delta").path("content")).length();
+                            for (int choiceIndex = 0; choiceIndex < choices.size(); choiceIndex++) {
+                                chars += Json.text(choices.get(choiceIndex).path("delta").path("content")).length();
                             }
                         }
                     }
@@ -186,7 +193,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
                 }
             } finally {
                 if (!sawUsage) {
-                    lease.addUsage(prompt, 0, Math.max(1, chars / 4), true);
+                    lease.addUsage(prompt, 0, Math.max(1, chars / Json.CHARS_PER_TOKEN), true);
                 }
                 out.flush();
             }

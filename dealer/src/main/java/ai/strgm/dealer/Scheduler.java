@@ -8,6 +8,8 @@ import ai.strgm.dealer.api.model.ServerType;
 import ai.strgm.dealer.api.model.SessionInfo;
 import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.deck.api.model.ModelProfile;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -43,7 +45,16 @@ import org.springframework.stereotype.Component;
 public class Scheduler {
     private static final Logger log = LoggerFactory.getLogger(Scheduler.class);
     private static final Pattern AUTO = Pattern.compile("auto-(\\d+)k");
-    private static final Map<String, Integer> TIERS = Map.of("32", 32768, "65", 65536, "128", 131072);
+    /** An {@code auto-<N>k} model that isn't one of the {@link AutoTier}s needs N thousand tokens. */
+    private static final int TOKENS_PER_K = 1000;
+    /** Prices are per million tokens. */
+    private static final double TOKENS_PER_MILLION = 1_000_000.0;
+    /** How long a request waits for its lease to become ready. */
+    private static final Duration READINESS_TIMEOUT = Duration.ofSeconds(90);
+    private static final long READINESS_POLL_MS = 150;
+    /** How many eviction events {@code /metrics/state} keeps. */
+    private static final int MAX_EVICTION_EVENTS = 50;
+    private static final long TICK_INTERVAL_MS = 500;
 
     static final class Session {
         final ClientDef client;
@@ -109,16 +120,17 @@ public class Scheduler {
         final var all = decks.profiles();
         final var auto = AUTO.matcher(model);
         if (auto.matches()) {
-            final int min = TIERS.getOrDefault(auto.group(1), Integer.parseInt(auto.group(1)) * 1000);
-            final var local = all.stream().filter(p -> !p.external() && p.profile().getContextWindow() >= min)
-                    .sorted(Comparator.comparingInt(p -> p.profile().getContextWindow())).toList();
+            final int min = AutoTier.ALL.stream().filter(tier -> tier.name().equals(model)).mapToInt(AutoTier::contextWindow)
+                    .findFirst().orElse(Integer.parseInt(auto.group(1)) * TOKENS_PER_K);
+            final var local = all.stream().filter(profileRef -> !profileRef.external() && profileRef.profile().getContextWindow() >= min)
+                    .sorted(Comparator.comparingInt(profileRef -> profileRef.profile().getContextWindow())).toList();
             final var external = client.externalRouting()
-                    ? all.stream().filter(p -> p.external() && p.profile().getContextWindow() >= min).toList()
+                    ? all.stream().filter(profileRef -> profileRef.external() && profileRef.profile().getContextWindow() >= min).toList()
                     : List.<ProfileRef>of();
             return Stream.concat(local.stream(), external.stream()).toList();
         }
-        return all.stream().filter(p -> p.profile().getId().equals(model) || p.profile().getModel().equals(model))
-                .filter(p -> !p.external() || client.externalRouting()).toList();
+        return all.stream().filter(profileRef -> profileRef.profile().getId().equals(model) || profileRef.profile().getModel().equals(model))
+                .filter(profileRef -> !profileRef.external() || client.externalRouting()).toList();
     }
 
     public boolean isVirtual(final String model) {
@@ -129,33 +141,33 @@ public class Scheduler {
     public Placement acquire(final ClientDef client, final String sessionId, final String model, final int requestPriority) {
         final Waiter waiter;
         synchronized (lock) {
-            final var s = sessions.computeIfAbsent(client.name() + "|" + sessionId, k -> new Session(client, sessionId));
-            s.requests++;
-            s.lastActivity = System.currentTimeMillis();
-            final var held = s.profile;
-            final var heldLease = s.leaseId;
-            if (held != null && heldLease != null && !s.evictPending && model.equals(s.model)) {
-                s.inFlight++;
-                return new Placement(s, held, heldLease);
+            final var session = sessions.computeIfAbsent(client.name() + "|" + sessionId, key -> new Session(client, sessionId));
+            session.requests++;
+            session.lastActivity = System.currentTimeMillis();
+            final var held = session.profile;
+            final var heldLease = session.leaseId;
+            if (held != null && heldLease != null && !session.evictPending && model.equals(session.model)) {
+                session.inFlight++;
+                return new Placement(session, held, heldLease);
             }
-            if (held != null && heldLease != null && s.inFlight == 0 && !model.equals(s.model)) {
+            if (held != null && heldLease != null && session.inFlight == 0 && !model.equals(session.model)) {
                 decks.release(held.server(), heldLease);
-                clearLease(s, "released");
+                clearLease(session, "released");
             }
-            s.model = model;
-            waiter = new Waiter(s, model, requestPriority, seq++);
+            session.model = model;
+            waiter = new Waiter(session, model, requestPriority, seq++);
             waiters.add(waiter);
         }
         dispatch();
         final Placement placement;
         try {
             placement = waiter.future.get();
-        } catch (InterruptedException e) {
+        } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             cancel(waiter);
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", "Interrupted while queued");
-        } catch (ExecutionException e) {
-            final var cause = e.getCause();
+        } catch (ExecutionException exception) {
+            final var cause = exception.getCause();
             final var reason = cause == null ? null : cause.getMessage();
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", reason != null ? reason : "The request couldn't be placed");
         }
@@ -163,85 +175,85 @@ public class Scheduler {
         return placement;
     }
 
-    private void cancel(final Waiter w) {
+    private void cancel(final Waiter waiter) {
         synchronized (lock) {
-            waiters.remove(w);
-            reservations.values().removeIf(r -> r == w);
+            waiters.remove(waiter);
+            reservations.values().removeIf(reserved -> reserved == waiter);
         }
     }
 
-    private void awaitReady(final Placement p) {
-        final var deadline = System.currentTimeMillis() + 90_000;
+    private void awaitReady(final Placement placement) {
+        final var deadline = System.currentTimeMillis() + READINESS_TIMEOUT.toMillis();
         while (System.currentTimeMillis() < deadline) {
-            final var lease = decks.lease(p.profile().server(), p.leaseId());
+            final var lease = decks.lease(placement.profile().server(), placement.leaseId());
             if (lease.getState() == LeaseState.READY) {
                 synchronized (lock) {
-                    p.session().leaseState = "ready";
-                    p.session().leaseReadyAt = lease.getReadyAtMs() == null ? System.currentTimeMillis() : lease.getReadyAtMs();
+                    placement.session().leaseState = "ready";
+                    placement.session().leaseReadyAt = lease.getReadyAtMs() == null ? System.currentTimeMillis() : lease.getReadyAtMs();
                 }
                 return;
             }
-            sleep(150);
+            sleep(READINESS_POLL_MS);
         }
-        throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", "Lease " + p.leaseId() + " never became ready");
+        throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", "Lease " + placement.leaseId() + " never became ready");
     }
 
     /** Called when a request's stream ends: accounts usage and applies a pending eviction. */
-    public void release(final Placement p, final long prompt, final long cached, final long completion) {
+    public void release(final Placement placement, final long prompt, final long cached, final long completion) {
         synchronized (lock) {
-            final var s = p.session();
-            s.inFlight = Math.max(0, s.inFlight - 1);
-            s.lastActivity = System.currentTimeMillis();
-            s.promptTokens += prompt;
-            s.cachedTokens += cached;
-            s.completionTokens += completion;
-            final var prices = p.profile().profile().getPrices();
+            final var session = placement.session();
+            session.inFlight = Math.max(0, session.inFlight - 1);
+            session.lastActivity = System.currentTimeMillis();
+            session.promptTokens += prompt;
+            session.cachedTokens += cached;
+            session.completionTokens += completion;
+            final var prices = placement.profile().profile().getPrices();
             if (prices != null) {
-                s.costUsd += ((prompt - cached) * nz(prices.getInputPerMTok()) + cached * nz(prices.getCachedInputPerMTok())
-                        + completion * nz(prices.getOutputPerMTok())) / 1_000_000.0;
+                session.costUsd += ((prompt - cached) * nz(prices.getInputPerMTok()) + cached * nz(prices.getCachedInputPerMTok())
+                        + completion * nz(prices.getOutputPerMTok())) / TOKENS_PER_MILLION;
             }
-            if (s.evictPending && s.inFlight == 0) {
-                evictNow(s);
+            if (session.evictPending && session.inFlight == 0) {
+                evictNow(session);
             }
         }
         dispatch();
     }
 
-    private static double nz(final @Nullable Double d) {
-        return d == null ? 0 : d;
+    private static double nz(final @Nullable Double price) {
+        return price == null ? 0 : price;
     }
 
-    private void clearLease(final Session s, final String state) {
-        s.leaseId = null;
-        s.profile = null;
-        s.evictPending = false;
-        s.leaseState = state;
+    private void clearLease(final Session session, final String state) {
+        session.leaseId = null;
+        session.profile = null;
+        session.evictPending = false;
+        session.leaseState = state;
     }
 
-    private void evictNow(final Session s) {
-        final var held = s.profile;
-        final var heldLease = s.leaseId;
+    private void evictNow(final Session session) {
+        final var held = session.profile;
+        final var heldLease = session.leaseId;
         if (held != null && heldLease != null) {
             decks.evict(held.server(), heldLease);
-            log.info("Evicted {} from {}", s.ref(), held.key());
+            log.info("Evicted {} from {}", session.ref(), held.key());
         }
-        clearLease(s, "evicted");
+        clearLease(session, "evicted");
     }
 
-    private boolean reservedForOther(final ProfileRef c, final Waiter w) {
-        for (final var e : reservations.entrySet()) {
-            if (e.getValue() == w) {
+    private boolean reservedForOther(final ProfileRef candidate, final Waiter waiter) {
+        for (final var reservation : reservations.entrySet()) {
+            if (reservation.getValue() == waiter) {
                 continue;
             }
-            final var reserved = decks.profiles().stream().filter(p -> p.key().equals(e.getKey())).findFirst();
+            final var reserved = decks.profiles().stream().filter(profileRef -> profileRef.key().equals(reservation.getKey())).findFirst();
             if (reserved.isEmpty()) {
                 continue;
             }
-            final var r = reserved.get();
-            if (r.key().equals(c.key())) {
+            final var reservedProfile = reserved.get();
+            if (reservedProfile.key().equals(candidate.key())) {
                 return true;
             }
-            if (r.server() == c.server() && (reduces(r.profile(), c.profile().getId()) || reduces(c.profile(), r.profile().getId()))) {
+            if (reservedProfile.server() == candidate.server() && (reduces(reservedProfile.profile(), candidate.profile().getId()) || reduces(candidate.profile(), reservedProfile.profile().getId()))) {
                 return true;
             }
         }
@@ -249,101 +261,101 @@ public class Scheduler {
     }
 
     /** Whether a lease on {@code p} reduces the leases another profile on its server can grant. Any reduction counts. */
-    private static boolean reduces(final ModelProfile p, final String otherId) {
-        return p.getLimitations() != null && p.getLimitations().getLeaseReductions() != null
-                && p.getLimitations().getLeaseReductions().stream().anyMatch(r -> r.getProfileId().equals(otherId));
+    private static boolean reduces(final ModelProfile profile, final String otherId) {
+        return profile.getLimitations() != null && profile.getLimitations().getLeaseReductions() != null
+                && profile.getLimitations().getLeaseReductions().stream().anyMatch(reduction -> reduction.getProfileId().equals(otherId));
     }
 
     /** Places every placeable waiter, in priority order, and starts evictions where client priority allows. */
     public void dispatch() {
         synchronized (lock) {
-            waiters.sort(Comparator.<Waiter>comparingInt(w -> -w.session.client.priority())
-                    .thenComparingInt(w -> -w.requestPriority).thenComparingLong(w -> w.seq));
-            final var it = waiters.iterator();
-            while (it.hasNext()) {
-                final var w = it.next();
+            waiters.sort(Comparator.<Waiter>comparingInt(queued -> -queued.session.client.priority())
+                    .thenComparingInt(queued -> -queued.requestPriority).thenComparingLong(queued -> queued.seq));
+            final var queue = waiters.iterator();
+            while (queue.hasNext()) {
+                final var waiter = queue.next();
                 ProfileRef firstBlocked = null;
                 List<String> firstBlockers = null;
                 boolean placed = false;
-                for (final var c : candidates(w.session.client, w.model)) {
-                    if (reservedForOther(c, w)) {
+                for (final var candidate : candidates(waiter.session.client, waiter.model)) {
+                    if (reservedForOther(candidate, waiter)) {
                         continue;
                     }
                     try {
-                        final var lease = decks.acquire(c, w.session.ref());
-                        final var s = w.session;
-                        s.profile = c;
-                        s.leaseId = lease.getId();
-                        s.leaseState = lease.getState().getValue();
-                        s.inFlight++;
-                        it.remove();
-                        reservations.values().removeIf(r -> r == w);
-                        w.future.complete(new Placement(s, c, lease.getId()));
-                        log.info("Placed {} on {} ({})", s.ref(), c.key(), lease.getState().getValue());
+                        final var lease = decks.acquire(candidate, waiter.session.ref());
+                        final var session = waiter.session;
+                        session.profile = candidate;
+                        session.leaseId = lease.getId();
+                        session.leaseState = lease.getState().getValue();
+                        session.inFlight++;
+                        queue.remove();
+                        reservations.values().removeIf(reserved -> reserved == waiter);
+                        waiter.future.complete(new Placement(session, candidate, lease.getId()));
+                        log.info("Placed {} on {} ({})", session.ref(), candidate.key(), lease.getState().getValue());
                         placed = true;
                         break;
-                    } catch (DeckRegistry.Blocked b) {
+                    } catch (DeckRegistry.Blocked blocked) {
                         if (firstBlocked == null) {
-                            firstBlocked = c;
-                            firstBlockers = b.blockers;
+                            firstBlocked = candidate;
+                            firstBlockers = blocked.blockers;
                         }
-                    } catch (Exception e) {
-                        log.warn("Lease on {} failed: {}", c.key(), e.getMessage());
+                    } catch (Exception exception) {
+                        log.warn("Lease on {} failed: {}", candidate.key(), exception.getMessage());
                     }
                 }
                 if (!placed && firstBlocked != null && firstBlockers != null) {
-                    considerEviction(w, firstBlocked, firstBlockers);
+                    considerEviction(waiter, firstBlocked, firstBlockers);
                 }
             }
         }
     }
 
-    private void considerEviction(final Waiter w, final ProfileRef target, final List<String> blockers) {
+    private void considerEviction(final Waiter waiter, final ProfileRef target, final List<String> blockers) {
         final List<Session> victims = new ArrayList<>();
         for (final var leaseId : blockers) {
             final var holder = sessions.values().stream()
-                    .filter(s -> leaseId.equals(s.leaseId) && s.profile != null && s.profile.server() == target.server())
+                    .filter(session -> leaseId.equals(session.leaseId) && session.profile != null && session.profile.server() == target.server())
                     .findFirst();
-            if (holder.isEmpty() || holder.get().client.priority() >= w.session.client.priority()) {
+            if (holder.isEmpty() || holder.get().client.priority() >= waiter.session.client.priority()) {
                 return;
             }
             victims.add(holder.get());
         }
-        reservations.putIfAbsent(target.key(), w);
+        reservations.putIfAbsent(target.key(), waiter);
         final var now = System.currentTimeMillis();
-        final var minLeaseMs = props.timers().minLeaseSeconds() * 1000L;
-        for (final var v : victims) {
-            if (v.evictPending || v.leaseReadyAt + minLeaseMs > now) {
+        final var minLeaseMs = Duration.ofSeconds(props.timers().minLeaseSeconds()).toMillis();
+        for (final var victim : victims) {
+            if (victim.evictPending || victim.leaseReadyAt + minLeaseMs > now) {
                 continue;
             }
-            v.evictPending = true;
-            v.leaseState = "evicting";
-            evictions.addLast(new EvictionEvent().createdAt(now / 1000).victimClient(v.client.name()).victimSession(v.id)
-                    .deckServer(target.server().name()).profileId(v.profile == null ? null : v.profile.profile().getId()).byClient(w.session.client.name())
-                    .reason("priority " + w.session.client.priority() + " > " + v.client.priority() + " needs " + target.profile().getId()));
-            while (evictions.size() > 50) {
+            victim.evictPending = true;
+            victim.leaseState = "evicting";
+            evictions.addLast(new EvictionEvent().createdAt(Instant.ofEpochMilli(now).getEpochSecond()).victimClient(victim.client.name()).victimSession(victim.id)
+                    .deckServer(target.server().name()).profileId(victim.profile == null ? null : victim.profile.profile().getId()).byClient(waiter.session.client.name())
+                    .reason("priority " + waiter.session.client.priority() + " > " + victim.client.priority() + " needs " + target.profile().getId()));
+            while (evictions.size() > MAX_EVICTION_EVENTS) {
                 evictions.removeFirst();
             }
-            log.info("Evicting {} for {} (needs {})", v.ref(), w.session.ref(), target.key());
-            if (v.inFlight == 0) {
-                evictNow(v);
+            log.info("Evicting {} for {} (needs {})", victim.ref(), waiter.session.ref(), target.key());
+            if (victim.inFlight == 0) {
+                evictNow(victim);
             }
         }
     }
 
     /** Releases leases idle for longer than N, then re-dispatches (evictions wait for M to pass). */
-    @Scheduled(fixedDelay = 500)
+    @Scheduled(fixedDelay = TICK_INTERVAL_MS)
     public void tick() {
         synchronized (lock) {
-            final var idleMs = props.timers().idleSeconds() * 1000L;
+            final var idleMs = Duration.ofSeconds(props.timers().idleSeconds()).toMillis();
             final var now = System.currentTimeMillis();
-            for (final var s : sessions.values()) {
-                final var held = s.profile;
-                final var heldLease = s.leaseId;
-                if (held != null && heldLease != null && s.inFlight == 0 && !s.evictPending && now - s.lastActivity > idleMs) {
+            for (final var session : sessions.values()) {
+                final var held = session.profile;
+                final var heldLease = session.leaseId;
+                if (held != null && heldLease != null && session.inFlight == 0 && !session.evictPending && now - session.lastActivity > idleMs) {
                     decks.release(held.server(), heldLease);
-                    log.info("Released idle lease of {} on {}", s.ref(), held.key());
-                    clearLease(s, "released (idle)");
+                    log.info("Released idle lease of {} on {}", session.ref(), held.key());
+                    clearLease(session, "released (idle)");
                 }
             }
         }
@@ -353,10 +365,10 @@ public class Scheduler {
     public List<QueuedRequest> queue() {
         synchronized (lock) {
             final var now = System.currentTimeMillis();
-            return waiters.stream().map(w -> new QueuedRequest().client(w.session.client.name()).sessionId(w.session.id)
-                    .model(w.model).clientPriority(w.session.client.priority()).requestPriority(w.requestPriority)
-                    .waitingMs(now - w.enqueuedAt).reservedProfile(reservations.entrySet().stream()
-                            .filter(e -> e.getValue() == w).map(Map.Entry::getKey).findFirst().orElse(null)))
+            return waiters.stream().map(waiter -> new QueuedRequest().client(waiter.session.client.name()).sessionId(waiter.session.id)
+                    .model(waiter.model).clientPriority(waiter.session.client.priority()).requestPriority(waiter.requestPriority)
+                    .waitingMs(now - waiter.enqueuedAt).reservedProfile(reservations.entrySet().stream()
+                            .filter(reservation -> reservation.getValue() == waiter).map(Map.Entry::getKey).findFirst().orElse(null)))
                     .toList();
         }
     }
@@ -364,14 +376,14 @@ public class Scheduler {
     public List<SessionInfo> sessions() {
         synchronized (lock) {
             final var now = System.currentTimeMillis();
-            return sessions.values().stream().map(s -> new SessionInfo().client(s.client.name()).sessionId(s.id).model(s.model)
-                    .deckServer(s.profile == null ? null : s.profile.server().name())
-                    .serverType(s.profile == null ? null : ServerType.fromValue(s.profile.server().def().egress()))
-                    .profileId(s.profile == null ? null : s.profile.profile().getId()).leaseId(s.leaseId)
-                    .leaseState(s.leaseState).leaseAgeMs(s.leaseId == null || s.leaseReadyAt == 0 ? null : now - s.leaseReadyAt)
-                    .idleMs(s.inFlight > 0 ? 0L : now - s.lastActivity).inFlight(s.inFlight).evictPending(s.evictPending)
-                    .requests(s.requests).promptTokens(s.promptTokens).cachedTokens(s.cachedTokens)
-                    .completionTokens(s.completionTokens).costUsd(s.costUsd))
+            return sessions.values().stream().map(session -> new SessionInfo().client(session.client.name()).sessionId(session.id).model(session.model)
+                    .deckServer(session.profile == null ? null : session.profile.server().name())
+                    .serverType(session.profile == null ? null : ServerType.fromValue(session.profile.server().def().egress()))
+                    .profileId(session.profile == null ? null : session.profile.profile().getId()).leaseId(session.leaseId)
+                    .leaseState(session.leaseState).leaseAgeMs(session.leaseId == null || session.leaseReadyAt == 0 ? null : now - session.leaseReadyAt)
+                    .idleMs(session.inFlight > 0 ? 0L : now - session.lastActivity).inFlight(session.inFlight).evictPending(session.evictPending)
+                    .requests(session.requests).promptTokens(session.promptTokens).cachedTokens(session.cachedTokens)
+                    .completionTokens(session.completionTokens).costUsd(session.costUsd))
                     .toList();
         }
     }
@@ -385,7 +397,7 @@ public class Scheduler {
     private static void sleep(final long ms) {
         try {
             Thread.sleep(ms);
-        } catch (InterruptedException e) {
+        } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
         }
     }
