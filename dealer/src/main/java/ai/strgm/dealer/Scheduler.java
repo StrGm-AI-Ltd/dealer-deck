@@ -7,6 +7,11 @@ import ai.strgm.dealer.api.model.QueuedRequest;
 import ai.strgm.dealer.api.model.SessionInfo;
 import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.deck.api.model.ModelProfile;
+import ai.strgm.types.LeaseId;
+import ai.strgm.types.ModelName;
+import ai.strgm.types.ProfileId;
+import ai.strgm.types.SessionId;
+import ai.strgm.types.SessionRef;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -54,12 +59,12 @@ public class Scheduler {
     private static final int MAX_EVICTION_EVENTS = 50;
     private static final long TICK_INTERVAL_MS = 500;
 
-    public record Placement(Session session, ProfileRef profile, String leaseId) {}
+    public record Placement(Session session, ProfileRef profile, LeaseId leaseId) {}
 
     private final DeckRegistry decks;
     private final DealerProperties props;
     private final Object lock = new Object();
-    private final Map<String, Session> sessions = new LinkedHashMap<>();
+    private final Map<SessionRef, Session> sessions = new LinkedHashMap<>();
     private final List<LeaseRequest> leaseRequests = new ArrayList<>();
     private final Map<String, LeaseRequest> reservations = new HashMap<>();
     private final Deque<EvictionEvent> evictions = new ArrayDeque<>();
@@ -71,9 +76,9 @@ public class Scheduler {
     }
 
     /** The profiles a request may use, in preference order. */
-    List<ProfileRef> candidates(final ClientDef client, final String model) {
+    List<ProfileRef> candidates(final ClientDef client, final ModelName model) {
         final var all = decks.profiles();
-        final var auto = AUTO.matcher(model);
+        final var auto = AUTO.matcher(model.value());
         if (auto.matches()) {
             final int min = AutoTier.ALL.stream().filter(tier -> tier.name().equals(model)).mapToInt(AutoTier::contextWindow)
                     .findFirst().orElse(Integer.parseInt(auto.group(1)) * TOKENS_PER_K);
@@ -84,16 +89,17 @@ public class Scheduler {
                     : List.<ProfileRef>of();
             return Stream.concat(local.stream(), external.stream()).toList();
         }
-        return all.stream().filter(profileRef -> profileRef.profile().getId().equals(model) || profileRef.profile().getModel().equals(model))
+        // a client may name a profile by its id as well as by its model
+        return all.stream().filter(profileRef -> profileRef.profile().getId().value().equals(model.value()) || profileRef.profile().getModel().equals(model))
                 .filter(profileRef -> !profileRef.external() || client.externalRouting()).toList();
     }
 
-    public boolean isVirtual(final String model) {
-        return AUTO.matcher(model).matches();
+    public boolean isVirtual(final ModelName model) {
+        return AUTO.matcher(model.value()).matches();
     }
 
     /** Blocks until the request is placed on a ready lease. */
-    public Placement acquire(final ClientDef client, final String sessionId, final String model, final int requestPriority) {
+    public Placement acquire(final ClientDef client, final SessionId sessionId, final ModelName model, final int requestPriority) {
         final var placement = place(client, sessionId, model, requestPriority);
         try {
             awaitReady(placement);
@@ -110,7 +116,7 @@ public class Scheduler {
      * Places the request on its session's lease, or queues it for a new one. A session queues one acquisition at a
      * time (#64): a request that finds one queued waits for it, then tries again.
      */
-    private Placement place(final ClientDef client, final String sessionId, final String model, final int requestPriority) {
+    private Placement place(final ClientDef client, final SessionId sessionId, final ModelName model, final int requestPriority) {
         final Session session;
         synchronized (lock) {
             session = sessions.computeIfAbsent(sessionKey(client, sessionId), key -> new Session(client, sessionId));
@@ -140,9 +146,12 @@ public class Scheduler {
         }
     }
 
-    /** Session ids are scoped to their client: two clients can both have a session {@code s-1}. */
-    private static String sessionKey(final ClientDef client, final String sessionId) {
-        return client.name() + "|" + sessionId;
+    /**
+     * A session's key: the reference DECK knows it by. Session ids are scoped to their client, and two clients can
+     * both have a session {@code s-1}, so the key holds both.
+     */
+    private static SessionRef sessionKey(final ClientDef client, final SessionId sessionId) {
+        return SessionRef.of(client.name(), sessionId);
     }
 
     /** Waits for the request's own acquisition to be placed. */
@@ -247,7 +256,7 @@ public class Scheduler {
     }
 
     /** Whether a lease on {@code p} reduces the leases another profile on its server can grant. Any reduction counts. */
-    private static boolean reduces(final ModelProfile profile, final String otherId) {
+    private static boolean reduces(final ModelProfile profile, final ProfileId otherId) {
         return profile.getLimitations() != null && profile.getLimitations().getLeaseReductions() != null
                 && profile.getLimitations().getLeaseReductions().stream().anyMatch(reduction -> reduction.getProfileId().equals(otherId));
     }
@@ -274,7 +283,7 @@ public class Scheduler {
                     continue;
                 }
                 ProfileRef firstBlocked = null;
-                List<String> firstBlockers = null;
+                List<LeaseId> firstBlockers = null;
                 boolean placed = false;
                 for (final var candidate : candidates(session.client(), leaseRequest.model())) {
                     if (reservedForOther(candidate, leaseRequest)) {
@@ -305,7 +314,7 @@ public class Scheduler {
         }
     }
 
-    private void considerEviction(final LeaseRequest leaseRequest, final ProfileRef target, final List<String> blockers) {
+    private void considerEviction(final LeaseRequest leaseRequest, final ProfileRef target, final List<LeaseId> blockers) {
         final List<Session> victims = new ArrayList<>();
         for (final var leaseId : blockers) {
             final var holder = sessions.values().stream().filter(session -> session.holds(leaseId, target.server())).findFirst();

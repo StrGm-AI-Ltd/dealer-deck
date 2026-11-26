@@ -9,6 +9,10 @@ import ai.strgm.dealer.api.model.SessionLeaseState;
 import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.deck.api.model.Prices;
+import ai.strgm.types.LeaseId;
+import ai.strgm.types.ModelName;
+import ai.strgm.types.SessionId;
+import ai.strgm.types.SessionRef;
 import java.util.Objects;
 import org.jspecify.annotations.Nullable;
 
@@ -22,12 +26,12 @@ final class Session {
     private static final double TOKENS_PER_MILLION = 1_000_000.0;
 
     /** The lease a session holds; its profile and id are set and cleared together. */
-    record HeldLease(ProfileRef profile, String id) {}
+    record HeldLease(ProfileRef profile, LeaseId id) {}
 
     private final ClientDef client;
-    private final String id;
+    private final SessionId id;
     /** The model of the session's lease, or of its last one. */
-    private @Nullable String model;
+    private @Nullable ModelName model;
     private @Nullable HeldLease lease;
     private SessionLeaseState leaseState = SessionLeaseState.NONE;
     private long leaseReadyAt;
@@ -42,7 +46,7 @@ final class Session {
     // TODO(#104): a money amount with its currency, instead of a bare double whose currency only its name gives
     private double costUsd;
 
-    Session(final ClientDef client, final String id) {
+    Session(final ClientDef client, final SessionId id) {
         this.client = client;
         this.id = id;
     }
@@ -51,13 +55,13 @@ final class Session {
         return client;
     }
 
-    String id() {
+    SessionId id() {
         return id;
     }
 
-    /** The reference DECK knows the session by: {@code <client>/<session id>}. */
-    String ref() {
-        return client.name() + "/" + id;
+    /** The reference DECK knows the session by. */
+    SessionRef ref() {
+        return SessionRef.of(client.name(), id);
     }
 
     /** Counts a new request, and restarts the session's idle time. */
@@ -83,7 +87,7 @@ final class Session {
     }
 
     /** Whether a request for {@code model} can use the session's lease: it holds one for that model, not being evicted. */
-    boolean canReuse(final String model) {
+    boolean canReuse(final ModelName model) {
         return lease != null && !evictPending && model.equals(this.model);
     }
 
@@ -99,7 +103,7 @@ final class Session {
     }
 
     /** Whether the session holds lease {@code leaseId} on {@code server}. */
-    boolean holds(final String leaseId, final Server server) {
+    boolean holds(final LeaseId leaseId, final Server server) {
         return lease != null && lease.id().equals(leaseId) && lease.profile().server() == server;
     }
 

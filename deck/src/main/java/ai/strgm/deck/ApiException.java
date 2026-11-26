@@ -1,5 +1,6 @@
 package ai.strgm.deck;
 
+import ai.strgm.types.LeaseId;
 import java.util.List;
 import org.jspecify.annotations.Nullable;
 import org.springframework.http.HttpStatus;
@@ -8,13 +9,13 @@ import org.springframework.http.HttpStatus;
 public class ApiException extends RuntimeException {
     final HttpStatus status;
     final String type;
-    final @Nullable List<String> blockers;
+    final @Nullable List<LeaseId> blockers;
 
     public ApiException(final HttpStatus status, final String type, final String message) {
         this(status, type, message, null);
     }
 
-    public ApiException(final HttpStatus status, final String type, final String message, final @Nullable List<String> blockers) {
+    public ApiException(final HttpStatus status, final String type, final String message, final @Nullable List<LeaseId> blockers) {
         super(message);
         this.status = status;
         this.type = type;

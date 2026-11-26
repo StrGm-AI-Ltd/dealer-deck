@@ -1,6 +1,7 @@
 package ai.strgm.deck.openai;
 
 import ai.strgm.deck.api.model.Implementation;
+import ai.strgm.types.ModelName;
 import java.util.List;
 import org.jspecify.annotations.Nullable;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -21,6 +22,6 @@ public record UpstreamProperties(String provider, Implementation implementation,
      * e.g. in Nebius's model catalogue (null = unknown).
      */
     // TODO(#104): prices as money amounts with their currency, instead of bare doubles in an implied currency
-    public record Model(String model, int contextWindow, double inputPerMTok, double cachedInputPerMTok,
+    public record Model(ModelName model, int contextWindow, double inputPerMTok, double cachedInputPerMTok,
             double outputPerMTok, @Nullable Integer maxLeases, @Nullable String quantization, @Nullable Double bitsPerWeight) {}
 }

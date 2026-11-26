@@ -61,7 +61,7 @@ paths:
             Only the leases on this profile. A filter, not a reference: a profile id this server doesn't serve
             matches no leases, so the list is empty.
           schema:
-            type: string
+            $ref: 'common.yaml#/components/schemas/ProfileId'
           example: small-a
         - name: sessionRef
           in: query
@@ -71,7 +71,7 @@ paths:
             A filter like `profileId`: a session without an active lease matches nothing, so the list is empty.
             With both filters, a lease must match both.
           schema:
-            type: string
+            $ref: 'common.yaml#/components/schemas/SessionRef'
           example: agent-a/a-1
       responses:
         '200':
@@ -233,7 +233,7 @@ paths:
           in: header
           required: true
           schema:
-            type: string
+            $ref: 'common.yaml#/components/schemas/LeaseId'
           example: lease-24af55a1
         - name: X-Provider-Authorization
           in: header
@@ -388,7 +388,7 @@ components:
       in: path
       required: true
       schema:
-        type: string
+        $ref: 'common.yaml#/components/schemas/LeaseId'
       example: lease-24af55a1
   responses:
     Unauthorized:
@@ -699,12 +699,11 @@ components:
           example: 0.3
     LeaseReduction:
       type: object
+      description: Another profile on the same server, `profileId`, and how many fewer leases it can grant
       required: [profileId, leases]
       properties:
         profileId:
-          type: string
-          description: Another profile on the same server
-          example: large
+          $ref: 'common.yaml#/components/schemas/ProfileId'
         leases:
           type: integer
           minimum: 1
@@ -766,11 +765,9 @@ components:
       required: [id, model, contextWindow, readiness]
       properties:
         id:
-          type: string
-          example: small-a
+          $ref: 'common.yaml#/components/schemas/ProfileId'
         model:
-          type: string
-          example: stub/small-a
+          $ref: 'common.yaml#/components/schemas/ModelName'
         provider:
           type: string
           description: The provider behind the server, e.g. `nebius` or `omlx`; null on the stub
@@ -826,8 +823,7 @@ components:
       required: [server, implementation, profiles]
       properties:
         server:
-          type: string
-          example: stub
+          $ref: 'common.yaml#/components/schemas/ServerName'
         implementation:
           $ref: '#/components/schemas/Implementation'
         profiles:
@@ -848,12 +844,9 @@ components:
       required: [profileId, sessionRef]
       properties:
         profileId:
-          type: string
-          example: small-a
+          $ref: 'common.yaml#/components/schemas/ProfileId'
         sessionRef:
-          type: string
-          description: Opaque reference to DEALER's session; DEALER sends `<client>/<session id>`
-          example: agent-a/a-1
+          $ref: 'common.yaml#/components/schemas/SessionRef'
     Usage:
       type: object
       properties:
@@ -878,15 +871,11 @@ components:
       required: [id, profileId, state]
       properties:
         id:
-          type: string
-          example: lease-24af55a1
+          $ref: 'common.yaml#/components/schemas/LeaseId'
         profileId:
-          type: string
-          example: small-a
+          $ref: 'common.yaml#/components/schemas/ProfileId'
         sessionRef:
-          type: string
-          description: The `sessionRef` DEALER sent when acquiring the lease
-          example: agent-a/a-1
+          $ref: 'common.yaml#/components/schemas/SessionRef'
         state:
           $ref: '#/components/schemas/LeaseState'
         createdAtMs:
@@ -911,7 +900,7 @@ components:
           type: array
           description: IDs of the leases that block this one
           items:
-            type: string
+            $ref: 'common.yaml#/components/schemas/LeaseId'
           example: [lease-24af55a1]
     Worker:
       type: object
@@ -938,8 +927,7 @@ components:
       required: [server, implementation, profiles, leases]
       properties:
         server:
-          type: string
-          example: stub
+          $ref: 'common.yaml#/components/schemas/ServerName'
         implementation:
           $ref: '#/components/schemas/Implementation'
         provider:

@@ -7,6 +7,7 @@ import ai.strgm.dealer.api.model.ModelList;
 import ai.strgm.dealer.api.model.ServerInfo;
 import ai.strgm.dealer.api.server.MetricsApi;
 import ai.strgm.dealer.api.server.ModelsApi;
+import ai.strgm.types.ModelName;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -35,8 +36,9 @@ public class DealerApiController implements ModelsApi, MetricsApi {
         for (final var tier : AutoTier.ALL) {
             data.add(new Model(tier.name(), "model", startedAt, "dealer").contextWindow(tier.contextWindow()).virtual(true));
         }
-        decks.profiles().forEach(profileRef -> data.add(new Model(profileRef.profile().getId(), "model", startedAt,
-                profileRef.server().name()).deckServer(profileRef.server().name())
+        // a profile is listed by its id, which clients may request as a model name
+        decks.profiles().forEach(profileRef -> data.add(new Model(new ModelName(profileRef.profile().getId().value()), "model", startedAt,
+                profileRef.server().name().value()).deckServer(profileRef.server().name())
                 .serverType(profileRef.server().def().egress())
                 .contextWindow(profileRef.profile().getContextWindow()).virtual(false)));
         return ResponseEntity.ok(new ModelList("list", data));

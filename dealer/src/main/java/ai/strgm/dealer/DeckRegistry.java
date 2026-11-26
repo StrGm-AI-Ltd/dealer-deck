@@ -4,8 +4,12 @@ import ai.strgm.dealer.api.model.ServerType;
 import ai.strgm.deck.api.client.LeasesApi;
 import ai.strgm.deck.api.client.ModelProfilesApi;
 import ai.strgm.deck.api.model.Lease;
+import ai.strgm.deck.api.model.LeaseConflict;
 import ai.strgm.deck.api.model.LeaseRequest;
 import ai.strgm.deck.api.model.ModelProfile;
+import ai.strgm.types.LeaseId;
+import ai.strgm.types.ServerName;
+import ai.strgm.types.SessionRef;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -39,7 +43,7 @@ public class DeckRegistry {
             return def.egress() == ServerType.EXTERNAL;
         }
 
-        public String name() {
+        public ServerName name() {
             return def.name();
         }
     }
@@ -56,16 +60,16 @@ public class DeckRegistry {
 
     /** DECK refused a lease; {@code blockers} are the leases in the way. */
     public static class Blocked extends Exception {
-        final List<String> blockers;
+        final List<LeaseId> blockers;
 
-        Blocked(final List<String> blockers) {
+        Blocked(final List<LeaseId> blockers) {
             super("blocked by " + blockers);
             this.blockers = blockers;
         }
     }
 
-    private final Map<String, Server> servers = new LinkedHashMap<>();
-    private final Map<String, Boolean> reachable = new ConcurrentHashMap<>();
+    private final Map<ServerName, Server> servers = new LinkedHashMap<>();
+    private final Map<ServerName, Boolean> reachable = new ConcurrentHashMap<>();
     private final ObjectMapper mapper;
     private volatile List<ProfileRef> profiles = List.of();
 
@@ -105,36 +109,31 @@ public class DeckRegistry {
         return profiles;
     }
 
-    public Map<String, Server> servers() {
+    public Map<ServerName, Server> servers() {
         return servers;
     }
 
-    public boolean reachable(final String server) {
+    public boolean reachable(final ServerName server) {
         return reachable.getOrDefault(server, false);
     }
 
-    public Lease acquire(final ProfileRef profileRef, final String sessionRef) throws Blocked {
+    public Lease acquire(final ProfileRef profileRef, final SessionRef sessionRef) throws Blocked {
         try {
             return Objects.requireNonNull(profileRef.server().leases().acquireLease(new LeaseRequest(profileRef.profile().getId(), sessionRef)).getBody(),
                     "no lease in the response");
         } catch (HttpClientErrorException exception) {
             if (exception.getStatusCode().isSameCodeAs(HttpStatus.CONFLICT)) {
-                final var node = mapper.readTree(exception.getResponseBodyAsString()).path("blockers");
-                final List<String> blockers = new ArrayList<>();
-                for (int blockerIndex = 0; blockerIndex < node.size(); blockerIndex++) {
-                    blockers.add(node.get(blockerIndex).asString());
-                }
-                throw new Blocked(blockers);
+                throw new Blocked(mapper.readValue(exception.getResponseBodyAsString(), LeaseConflict.class).getBlockers());
             }
             throw exception;
         }
     }
 
-    public Lease lease(final Server server, final String leaseId) {
+    public Lease lease(final Server server, final LeaseId leaseId) {
         return Objects.requireNonNull(server.leases().getLease(leaseId).getBody(), "no lease in the response");
     }
 
-    public void release(final Server server, final String leaseId) {
+    public void release(final Server server, final LeaseId leaseId) {
         try {
             server.leases().releaseLease(leaseId);
         } catch (Exception ignored) {
@@ -142,7 +141,7 @@ public class DeckRegistry {
         }
     }
 
-    public void evict(final Server server, final String leaseId) {
+    public void evict(final Server server, final LeaseId leaseId) {
         try {
             server.leases().evictLease(leaseId);
         } catch (Exception ignored) {
