@@ -1,5 +1,6 @@
 package ai.strgm.deck;
 
+import org.jspecify.annotations.Nullable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
@@ -27,8 +28,8 @@ public class ChatController {
     }
 
     @PostMapping("/v1/chat/completions")
-    public ResponseEntity<StreamingResponseBody> chat(@RequestHeader(value = "X-Lease-Id", required = false) final String leaseId,
-            @RequestHeader(value = "X-Provider-Authorization", required = false) final String providerAuthorization,
+    public ResponseEntity<StreamingResponseBody> chat(@RequestHeader(value = "X-Lease-Id", required = false) final @Nullable String leaseId,
+            @RequestHeader(value = "X-Provider-Authorization", required = false) final @Nullable String providerAuthorization,
             @RequestBody final String body) {
         if (leaseId == null || leaseId.isBlank()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "Missing required header X-Lease-Id");

@@ -6,6 +6,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 import org.springframework.http.HttpStatus;
 import tools.jackson.databind.ObjectMapper;
 
@@ -71,7 +72,7 @@ public abstract class AbstractDeckServer implements DeckServer {
     }
 
     @Override
-    public synchronized List<Lease> leases(final String profileId, final String sessionRef) {
+    public synchronized List<Lease> leases(final @Nullable String profileId, final @Nullable String sessionRef) {
         synchronized (leases) {
             return leases.values().stream().filter(LeaseRecord::active)
                     .filter(l -> profileId == null || l.profileId.equals(profileId))

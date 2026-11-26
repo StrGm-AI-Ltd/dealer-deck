@@ -11,6 +11,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import org.jspecify.annotations.Nullable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -41,8 +42,8 @@ public class ChatController {
 
     @PostMapping("/v1/chat/completions")
     public ResponseEntity<StreamingResponseBody> chat(@RequestBody final String raw,
-            @RequestHeader(value = "X-Session-Id", required = false) final String sessionId,
-            @RequestHeader(value = "X-Request-Priority", required = false) final Integer requestPriority,
+            @RequestHeader(value = "X-Session-Id", required = false) final @Nullable String sessionId,
+            @RequestHeader(value = "X-Request-Priority", required = false) final @Nullable Integer requestPriority,
             final HttpServletRequest servletRequest) {
         final var client = (ClientDef) servletRequest.getAttribute(AuthFilter.CLIENT);
         if (client == null) {

@@ -3,6 +3,7 @@ plugins {
     id 'io.spring.dependency-management' version '1.1.7' apply false
     id 'com.vaadin' version '25.2.8' apply false
     id 'org.openapi.generator' version '7.27.0' apply false
+    id 'net.ltgt.errorprone' version '5.2.0' apply false
 }
 
 subprojects {
@@ -21,6 +22,24 @@ subprojects {
         }
         tasks.withType(JavaCompile).configureEach {
             options.compilerArgs += ['-parameters']
+        }
+    }
+}
+
+// NullAway checks the hand-written code's null safety at compile time: packages are @NullMarked (JSpecify), so a
+// type is non-null unless it's declared @Nullable. Only NullAway runs; Error Prone's other checks are off.
+configure(subprojects.findAll { it.name in ['deck', 'deck-openai', 'deck-stub', 'dealer'] }) {
+    apply plugin: 'net.ltgt.errorprone'
+    dependencies {
+        errorprone 'com.google.errorprone:error_prone_core:2.52.0'
+        errorprone 'com.uber.nullaway:nullaway:0.14.3'
+    }
+    tasks.withType(JavaCompile).configureEach {
+        options.errorprone {
+            disableAllChecks = true
+            error('NullAway')
+            option('NullAway:OnlyNullMarked', 'true')
+            option('NullAway:JSpecifyMode', 'true')
         }
     }
 }
