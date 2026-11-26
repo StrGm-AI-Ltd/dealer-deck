@@ -37,10 +37,6 @@ public class ChatController {
     /** How long one completion may take, streaming included. */
     private static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(5);
     private static final int MAX_SESSION_ID_LENGTH = 200;
-    /** {@code X-Request-Priority}'s range and default, as {@code dealer.yaml} documents them. */
-    private static final int MIN_PRIORITY = 1;
-    private static final int MAX_PRIORITY = 100;
-    private static final int DEFAULT_PRIORITY = 50;
     /** The prefix of a server-sent event's data line. */
     private static final String SSE_DATA_PREFIX = "data:";
 
@@ -72,9 +68,9 @@ public class ChatController {
         if (sessionId == null || sessionId.isBlank() || sessionId.length() > MAX_SESSION_ID_LENGTH) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "Missing or invalid required header X-Session-Id");
         }
-        if (requestPriority != null && (requestPriority < MIN_PRIORITY || requestPriority > MAX_PRIORITY)) {
+        if (requestPriority != null && !Priorities.RANGE.contains(requestPriority)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error",
-                    "X-Request-Priority must be between " + MIN_PRIORITY + " and " + MAX_PRIORITY, "X-Request-Priority");
+                    "X-Request-Priority must be between " + Priorities.MIN + " and " + Priorities.MAX, "X-Request-Priority");
         }
         final var model = body.path("model").isString() ? body.path("model").asString() : "";
         if (model.isBlank()) {
@@ -85,7 +81,7 @@ public class ChatController {
                     "No DECK profile serves \"" + model + "\" for client " + client.name()
                             + (client.externalRouting() ? "" : " (external routing is off for this client)"));
         }
-        final var priority = requestPriority == null ? DEFAULT_PRIORITY : requestPriority;
+        final var priority = requestPriority == null ? Priorities.DEFAULT_REQUEST : requestPriority;
         final var placement = scheduler.acquire(client, sessionId, model, priority);
         final var server = placement.profile().server();
         final var forward = (ObjectNode) body.deepCopy();

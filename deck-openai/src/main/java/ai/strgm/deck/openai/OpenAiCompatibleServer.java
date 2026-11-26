@@ -97,6 +97,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
         return lease.toApi();
     }
 
+    // TODO(#104): a money amount with its currency, instead of a bare double
     private double cost(final LeaseRecord lease) {
         final var upstreamModel = model(lease.profileId);
         synchronized (lease) {

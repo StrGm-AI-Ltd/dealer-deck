@@ -61,6 +61,7 @@ public class DashboardView extends VerticalLayout {
         sessions.addColumn(SessionInfo::getRequests).setHeader("Requests").setAutoWidth(true);
         sessions.addColumn(session -> session.getPromptTokens() + " / " + session.getCachedTokens() + " / " + session.getCompletionTokens())
                 .setHeader("Tokens (prompt / cached / completion)").setAutoWidth(true);
+        // TODO(#104): format money in its own currency, which the API doesn't carry yet; "$" is assumed
         sessions.addColumn(session -> String.format("$%.6f", session.getCostUsd() == null ? 0 : session.getCostUsd())).setHeader("Cost").setAutoWidth(true);
         sessions.setAllRowsVisible(true);
 
@@ -180,6 +181,7 @@ public class DashboardView extends VerticalLayout {
             workerGrids.get(name).setVisible(!workers.isEmpty());
             deckStatus.get(name).setText(deck.getImplementation().getValue()
                     + (deck.getProvider() == null ? "" : " · provider " + deck.getProvider())
+                    // TODO(#104): the spend's own currency, as for the session cost
                     + String.format(" · spend $%.6f", deck.getSpendUsd() == null ? 0 : deck.getSpendUsd()));
         });
     }
