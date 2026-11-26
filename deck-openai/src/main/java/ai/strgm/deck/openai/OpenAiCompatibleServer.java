@@ -24,6 +24,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import org.jspecify.annotations.Nullable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -103,7 +104,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
     }
 
     @Override
-    public StreamingResponseBody chat(final String leaseId, final String providerAuthorization, final JsonNode request) {
+    public StreamingResponseBody chat(final String leaseId, final @Nullable String providerAuthorization, final JsonNode request) {
         if (providerAuthorization == null || providerAuthorization.isBlank()) {
             throw new ApiException(HttpStatus.UNAUTHORIZED, "authentication_error",
                     "Missing X-Provider-Authorization: this DECK server forwards the provider credential it receives (D104)");

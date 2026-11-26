@@ -11,6 +11,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import org.jspecify.annotations.Nullable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
@@ -40,19 +42,28 @@ public class ChatController {
 
     @PostMapping("/v1/chat/completions")
     public ResponseEntity<StreamingResponseBody> chat(@RequestBody final String raw,
-            @RequestHeader(value = "X-Session-Id", required = false) final String sessionId,
-            @RequestHeader(value = "X-Request-Priority", required = false) final Integer requestPriority,
+            @RequestHeader(value = "X-Session-Id", required = false) final @Nullable String sessionId,
+            @RequestHeader(value = "X-Request-Priority", required = false) final @Nullable Integer requestPriority,
             final HttpServletRequest servletRequest) {
         final var client = (ClientDef) servletRequest.getAttribute(AuthFilter.CLIENT);
         if (client == null) {
             throw new ApiException(HttpStatus.UNAUTHORIZED, "authentication_error", "A client API key is required");
         }
-        final JsonNode body = mapper.readTree(raw);
+        final JsonNode body;
+        try {
+            body = mapper.readTree(raw);
+        } catch (JacksonException e) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "The request body isn't valid JSON");
+        }
         if (!(body.path("stream").isBoolean() && body.path("stream").booleanValue())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "DEALER streams only in v0.5: set \"stream\": true");
         }
         if (sessionId == null || sessionId.isBlank() || sessionId.length() > 200) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "Missing or invalid required header X-Session-Id");
+        }
+        if (requestPriority != null && (requestPriority < 1 || requestPriority > 100)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error",
+                    "X-Request-Priority must be between 1 and 100", "X-Request-Priority");
         }
         final var model = body.path("model").isString() ? body.path("model").asString() : "";
         if (model.isBlank()) {
@@ -63,7 +74,7 @@ public class ChatController {
                     "No DECK profile serves \"" + model + "\" for client " + client.name()
                             + (client.externalRouting() ? "" : " (external routing is off for this client)"));
         }
-        final var priority = requestPriority == null ? 50 : Math.max(1, Math.min(100, requestPriority));
+        final var priority = requestPriority == null ? 50 : requestPriority;
         final var placement = scheduler.acquire(client, sessionId, model, priority);
         final var server = placement.profile().server();
         final var forward = (ObjectNode) body.deepCopy();

@@ -20,6 +20,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -47,9 +48,9 @@ public class Scheduler {
     static final class Session {
         final ClientDef client;
         final String id;
-        String model;
-        ProfileRef profile;
-        String leaseId;
+        @Nullable String model;
+        @Nullable ProfileRef profile;
+        @Nullable String leaseId;
         String leaseState = "none";
         long leaseReadyAt;
         long lastActivity = System.currentTimeMillis();
@@ -131,12 +132,14 @@ public class Scheduler {
             final var s = sessions.computeIfAbsent(client.name() + "|" + sessionId, k -> new Session(client, sessionId));
             s.requests++;
             s.lastActivity = System.currentTimeMillis();
-            if (s.leaseId != null && !s.evictPending && model.equals(s.model)) {
+            final var held = s.profile;
+            final var heldLease = s.leaseId;
+            if (held != null && heldLease != null && !s.evictPending && model.equals(s.model)) {
                 s.inFlight++;
-                return new Placement(s, s.profile, s.leaseId);
+                return new Placement(s, held, heldLease);
             }
-            if (s.leaseId != null && s.inFlight == 0 && !model.equals(s.model)) {
-                decks.release(s.profile.server(), s.leaseId);
+            if (held != null && heldLease != null && s.inFlight == 0 && !model.equals(s.model)) {
+                decks.release(held.server(), heldLease);
                 clearLease(s, "released");
             }
             s.model = model;
@@ -152,7 +155,9 @@ public class Scheduler {
             cancel(waiter);
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", "Interrupted while queued");
         } catch (ExecutionException e) {
-            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", e.getCause().getMessage());
+            final var cause = e.getCause();
+            final var reason = cause == null ? null : cause.getMessage();
+            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", reason != null ? reason : "The request couldn't be placed");
         }
         awaitReady(placement);
         return placement;
@@ -202,7 +207,7 @@ public class Scheduler {
         dispatch();
     }
 
-    private static double nz(final Double d) {
+    private static double nz(final @Nullable Double d) {
         return d == null ? 0 : d;
     }
 
@@ -214,8 +219,12 @@ public class Scheduler {
     }
 
     private void evictNow(final Session s) {
-        decks.evict(s.profile.server(), s.leaseId);
-        log.info("Evicted {} from {}", s.ref(), s.profile.key());
+        final var held = s.profile;
+        final var heldLease = s.leaseId;
+        if (held != null && heldLease != null) {
+            decks.evict(held.server(), heldLease);
+            log.info("Evicted {} from {}", s.ref(), held.key());
+        }
         clearLease(s, "evicted");
     }
 
@@ -282,7 +291,7 @@ public class Scheduler {
                         log.warn("Lease on {} failed: {}", c.key(), e.getMessage());
                     }
                 }
-                if (!placed && firstBlocked != null) {
+                if (!placed && firstBlocked != null && firstBlockers != null) {
                     considerEviction(w, firstBlocked, firstBlockers);
                 }
             }
@@ -310,7 +319,7 @@ public class Scheduler {
             v.evictPending = true;
             v.leaseState = "evicting";
             evictions.addLast(new EvictionEvent().createdAt(now / 1000).victimClient(v.client.name()).victimSession(v.id)
-                    .deckServer(target.server().name()).profileId(v.profile.profile().getId()).byClient(w.session.client.name())
+                    .deckServer(target.server().name()).profileId(v.profile == null ? null : v.profile.profile().getId()).byClient(w.session.client.name())
                     .reason("priority " + w.session.client.priority() + " > " + v.client.priority() + " needs " + target.profile().getId()));
             while (evictions.size() > 50) {
                 evictions.removeFirst();
@@ -329,9 +338,11 @@ public class Scheduler {
             final var idleMs = props.timers().idleSeconds() * 1000L;
             final var now = System.currentTimeMillis();
             for (final var s : sessions.values()) {
-                if (s.leaseId != null && s.inFlight == 0 && !s.evictPending && now - s.lastActivity > idleMs) {
-                    decks.release(s.profile.server(), s.leaseId);
-                    log.info("Released idle lease of {} on {}", s.ref(), s.profile.key());
+                final var held = s.profile;
+                final var heldLease = s.leaseId;
+                if (held != null && heldLease != null && s.inFlight == 0 && !s.evictPending && now - s.lastActivity > idleMs) {
+                    decks.release(held.server(), heldLease);
+                    log.info("Released idle lease of {} on {}", s.ref(), held.key());
                     clearLease(s, "released (idle)");
                 }
             }

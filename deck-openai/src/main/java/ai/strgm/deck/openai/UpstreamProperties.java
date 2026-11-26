@@ -2,6 +2,7 @@ package ai.strgm.deck.openai;
 
 import ai.strgm.deck.api.model.Implementation;
 import java.util.List;
+import org.jspecify.annotations.Nullable;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
@@ -11,7 +12,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * {@code <provider>/}).
  */
 @ConfigurationProperties("deck.upstream")
-public record UpstreamProperties(String provider, Implementation implementation, String baseUrl, String idPrefix,
+public record UpstreamProperties(String provider, Implementation implementation, String baseUrl, @Nullable String idPrefix,
         List<Model> models) {
 
     /**
@@ -20,5 +21,5 @@ public record UpstreamProperties(String provider, Implementation implementation,
      * e.g. in Nebius's model catalogue (null = unknown).
      */
     public record Model(String model, int contextWindow, double inputPerMTok, double cachedInputPerMTok,
-            double outputPerMTok, Integer maxLeases, String quantization, Double bitsPerWeight) {}
+            double outputPerMTok, @Nullable Integer maxLeases, @Nullable String quantization, @Nullable Double bitsPerWeight) {}
 }

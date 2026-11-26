@@ -17,6 +17,8 @@ dependencies {
     api 'org.springframework:spring-context'
     api 'com.fasterxml.jackson.core:jackson-annotations'
     api 'jakarta.annotation:jakarta.annotation-api'
+    api 'jakarta.validation:jakarta.validation-api'
+    api 'org.jspecify:jspecify'
     compileOnly 'jakarta.servlet:jakarta.servlet-api'
 }
 
@@ -33,6 +35,7 @@ def common = [
         useTags                 : 'true',
         dateLibrary             : 'java8',
         hideGenerationTimestamp : 'true',
+        useJspecify             : 'true',
         sourceFolder            : 'src/main/java',
 ]
 def generated = []
@@ -53,7 +56,9 @@ def generated = []
             validateSpec.set(true)
             cleanupOutput.set(true)   // a renamed or removed schema must not leave its old class behind in the jar
             if (kind == 'server') {
-                configOptions.set(common + [interfaceOnly: 'true', skipDefaultInterface: 'true', configPackage: "ai.strgm.${name}.api.config".toString()])
+                // the servers validate what the documents require (required fields, minimum, maximum)
+                configOptions.set(common + [interfaceOnly: 'true', skipDefaultInterface: 'true', useBeanValidation: 'true',
+                        configPackage: "ai.strgm.${name}.api.config".toString()])
             } else {
                 configOptions.set(common + [library: 'spring-http-interface'])
                 globalProperties.set([apis: ''])

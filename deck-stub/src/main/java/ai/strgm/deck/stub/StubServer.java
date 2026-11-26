@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -159,7 +160,7 @@ public class StubServer extends AbstractDeckServer {
     }
 
     @Override
-    public StreamingResponseBody chat(final String leaseId, final String providerAuthorization, final JsonNode request) {
+    public StreamingResponseBody chat(final String leaseId, final @Nullable String providerAuthorization, final JsonNode request) {
         final var lease = activeRecord(leaseId);
         final var d = def(lease.profileId);
         final var maxTokens = (int) Math.max(1, Math.min(Json.number(request.path("max_tokens")) == 0 ? 40
