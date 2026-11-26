@@ -6,6 +6,7 @@ import ai.strgm.dealer.api.model.EvictionEvent;
 import ai.strgm.dealer.api.model.QueuedRequest;
 import ai.strgm.dealer.api.model.ServerType;
 import ai.strgm.dealer.api.model.SessionInfo;
+import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.deck.api.model.ModelProfile;
 import java.time.Duration;
@@ -139,6 +140,20 @@ public class Scheduler {
 
     /** Blocks until the request is placed on a ready lease. */
     public Placement acquire(final ClientDef client, final String sessionId, final String model, final int requestPriority) {
+        final var placement = place(client, sessionId, model, requestPriority);
+        try {
+            awaitReady(placement);
+        } catch (RuntimeException exception) {
+            // the request won't be served: undo its in-flight count, so the lease can still idle out or be evicted,
+            // and keep the lease, so a retry can use it (#101)
+            release(placement, 0, 0, 0);
+            throw exception;
+        }
+        return placement;
+    }
+
+    /** Places the request on its session's lease, or queues it for a new one. */
+    private Placement place(final ClientDef client, final String sessionId, final String model, final int requestPriority) {
         final Waiter waiter;
         synchronized (lock) {
             final var session = sessions.computeIfAbsent(client.name() + "|" + sessionId, key -> new Session(client, sessionId));
@@ -159,9 +174,8 @@ public class Scheduler {
             waiters.add(waiter);
         }
         dispatch();
-        final Placement placement;
         try {
-            placement = waiter.future.get();
+            return waiter.future.get();
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             cancel(waiter);
@@ -171,8 +185,6 @@ public class Scheduler {
             final var reason = cause == null ? null : cause.getMessage();
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", reason != null ? reason : "The request couldn't be placed");
         }
-        awaitReady(placement);
-        return placement;
     }
 
     private void cancel(final Waiter waiter) {
@@ -182,20 +194,31 @@ public class Scheduler {
         }
     }
 
+    /** Waits for the placement's lease to be ready, asking DECK until the session knows it is. */
     private void awaitReady(final Placement placement) {
+        final var session = placement.session();
         final var deadline = System.currentTimeMillis() + READINESS_TIMEOUT.toMillis();
         while (System.currentTimeMillis() < deadline) {
+            synchronized (lock) {
+                if (LeaseState.READY.getValue().equals(session.leaseState)) {
+                    return;
+                }
+            }
             final var lease = decks.lease(placement.profile().server(), placement.leaseId());
             if (lease.getState() == LeaseState.READY) {
                 synchronized (lock) {
-                    placement.session().leaseState = "ready";
-                    placement.session().leaseReadyAt = lease.getReadyAtMs() == null ? System.currentTimeMillis() : lease.getReadyAtMs();
+                    markReady(session, lease);
                 }
                 return;
             }
             sleep(READINESS_POLL_MS);
         }
         throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", "Lease " + placement.leaseId() + " never became ready");
+    }
+
+    private static void markReady(final Session session, final Lease lease) {
+        session.leaseState = LeaseState.READY.getValue();
+        session.leaseReadyAt = lease.getReadyAtMs() == null ? System.currentTimeMillis() : lease.getReadyAtMs();
     }
 
     /** Called when a request's stream ends: accounts usage and applies a pending eviction. */
@@ -286,7 +309,11 @@ public class Scheduler {
                         final var session = waiter.session;
                         session.profile = candidate;
                         session.leaseId = lease.getId();
-                        session.leaseState = lease.getState().getValue();
+                        if (lease.getState() == LeaseState.READY) {
+                            markReady(session, lease);
+                        } else {
+                            session.leaseState = lease.getState().getValue();
+                        }
                         session.inFlight++;
                         queue.remove();
                         reservations.values().removeIf(reserved -> reserved == waiter);
