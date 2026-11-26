@@ -19,15 +19,15 @@ import org.springframework.web.bind.annotation.RestController;
 public class DealerApiController implements ModelsApi, MetricsApi {
     private final DeckRegistry decks;
     private final Scheduler scheduler;
-    private final DealerProperties props;
+    private final DealerProperties properties;
     // every model's `created`: DEALER's start time (this controller is created once, at startup), as no model has
     // a creation date of its own
     private final long startedAt = Instant.now().getEpochSecond();
 
-    public DealerApiController(final DeckRegistry decks, final Scheduler scheduler, final DealerProperties props) {
+    public DealerApiController(final DeckRegistry decks, final Scheduler scheduler, final DealerProperties properties) {
         this.decks = decks;
         this.scheduler = scheduler;
-        this.props = props;
+        this.properties = properties;
     }
 
     @Override
@@ -39,19 +39,19 @@ public class DealerApiController implements ModelsApi, MetricsApi {
         // a profile is listed by its id, which clients may request as a model name
         decks.profiles().forEach(profileRef -> data.add(new Model(new ModelName(profileRef.profile().getId().value()), "model", startedAt,
                 profileRef.server().name().value()).deckServer(profileRef.server().name())
-                .serverType(profileRef.server().def().egress())
+                .serverType(profileRef.server().config().egress())
                 .contextWindow(profileRef.profile().getContextWindow()).virtual(false)));
         return ResponseEntity.ok(new ModelList("list", data));
     }
 
     @Override
     public ResponseEntity<DealerState> getDealerState() {
-        final var clients = props.clients().stream()
+        final var clients = properties.clients().stream()
                 .map(client -> new ClientInfo().name(client.name()).priority(client.priority()).externalRouting(client.externalRouting()))
                 .toList();
         final var servers = decks.servers().values().stream()
-                .map(server -> new ServerInfo().name(server.name()).url(server.def().url())
-                        .serverType(server.def().egress()).reachable(decks.reachable(server.name()))
+                .map(server -> new ServerInfo().name(server.name()).url(server.config().url())
+                        .serverType(server.config().egress()).reachable(decks.reachable(server.name()))
                         .profiles((int) decks.profiles().stream().filter(profileRef -> profileRef.server() == server).count()))
                 .toList();
         return ResponseEntity.ok(new DealerState().clients(clients).servers(servers).queue(scheduler.queue())

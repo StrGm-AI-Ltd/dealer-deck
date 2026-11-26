@@ -21,7 +21,7 @@ public abstract class AbstractDeckServer implements DeckServer {
     /** How many of the most recent leases {@link #state()} reports. */
     private static final int RECENT_LEASES = 30;
 
-    protected final DeckProperties props;
+    protected final DeckProperties properties;
     protected final ObjectMapper mapper;
     /**
      * Guards the lease store and a subclass's own capacity state (e.g. which profile each simulated worker has
@@ -31,8 +31,8 @@ public abstract class AbstractDeckServer implements DeckServer {
     /** Every lease this server has granted, oldest first. */
     private final Map<LeaseId, LeaseRecord> leases = new LinkedHashMap<>();
 
-    protected AbstractDeckServer(final DeckProperties props, final ObjectMapper mapper) {
-        this.props = props;
+    protected AbstractDeckServer(final DeckProperties properties, final ObjectMapper mapper) {
+        this.properties = properties;
         this.mapper = mapper;
     }
 

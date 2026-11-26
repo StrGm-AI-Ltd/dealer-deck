@@ -37,14 +37,14 @@ public class DeckRegistry {
     private static final long REFRESH_INTERVAL_MS = 1000;
 
 
-    public record Server(DealerProperties.ServerDef def, ModelProfilesApi modelProfiles, LeasesApi leases,
+    public record Server(DealerProperties.ServerDef config, ModelProfilesApi modelProfiles, LeasesApi leases,
             @Nullable String providerAuthorization) {
         public boolean external() {
-            return def.egress() == ServerType.EXTERNAL;
+            return config.egress() == ServerType.EXTERNAL;
         }
 
         public ServerName name() {
-            return def.name();
+            return config.name();
         }
     }
 
@@ -73,17 +73,17 @@ public class DeckRegistry {
     private final ObjectMapper mapper;
     private volatile List<ProfileRef> profiles = List.of();
 
-    public DeckRegistry(final DealerProperties props, final ObjectMapper mapper) {
+    public DeckRegistry(final DealerProperties properties, final ObjectMapper mapper) {
         this.mapper = mapper;
-        for (final var def : props.servers()) {
+        for (final var serverConfig : properties.servers()) {
             final var requests = new SimpleClientHttpRequestFactory();
             requests.setConnectTimeout(CONNECT_TIMEOUT);
             requests.setReadTimeout(READ_TIMEOUT);
-            final var rest = RestClient.builder().requestFactory(requests).baseUrl(def.url())
-                    .defaultHeader("Authorization", "Bearer " + def.key()).build();
-            final var factory = HttpServiceProxyFactory.builderFor(RestClientAdapter.create(rest)).build();
-            final var credential = def.providerCredentialEnv() == null ? null : System.getenv(def.providerCredentialEnv());
-            servers.put(def.name(), new Server(def, factory.createClient(ModelProfilesApi.class),
+            final var restClient = RestClient.builder().requestFactory(requests).baseUrl(serverConfig.url())
+                    .defaultHeader("Authorization", "Bearer " + serverConfig.key()).build();
+            final var factory = HttpServiceProxyFactory.builderFor(RestClientAdapter.create(restClient)).build();
+            final var credential = serverConfig.providerCredentialEnv() == null ? null : System.getenv(serverConfig.providerCredentialEnv());
+            servers.put(serverConfig.name(), new Server(serverConfig, factory.createClient(ModelProfilesApi.class),
                     factory.createClient(LeasesApi.class), credential == null || credential.isBlank() ? null : "Bearer " + credential));
         }
         refresh();

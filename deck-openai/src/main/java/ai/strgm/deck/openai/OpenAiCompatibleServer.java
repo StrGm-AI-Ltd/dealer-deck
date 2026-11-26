@@ -59,9 +59,9 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
     private final UpstreamProperties upstream;
     private final String prefix;
 
-    public OpenAiCompatibleServer(final DeckProperties props, final UpstreamProperties upstream,
+    public OpenAiCompatibleServer(final DeckProperties properties, final UpstreamProperties upstream,
             final ObjectMapper mapper) {
-        super(props, mapper);
+        super(properties, mapper);
         this.upstream = upstream;
         this.prefix = upstream.idPrefix() == null ? upstream.provider() + "/" : upstream.idPrefix();
     }
@@ -90,7 +90,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
 
     @Override
     public ModelProfiles modelProfiles() {
-        return new ModelProfiles(props.serverName(), upstream.implementation(), profiles());
+        return new ModelProfiles(properties.serverName(), upstream.implementation(), profiles());
     }
 
     @Override
@@ -124,7 +124,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
     @Override
     public DeckState state() {
         final var spend = all().stream().mapToDouble(this::cost).sum();
-        return new DeckState(props.serverName(), upstream.implementation(), profiles(), recent())
+        return new DeckState(properties.serverName(), upstream.implementation(), profiles(), recent())
                 .provider(upstream.provider()).spendUsd(spend);
     }
 
@@ -160,8 +160,8 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
         }
         if (response.statusCode() != HttpStatus.OK.value()) {
             final String text;
-            try (var in = response.body()) {
-                text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            try (var responseBody = response.body()) {
+                text = new String(responseBody.readAllBytes(), StandardCharsets.UTF_8);
             } catch (Exception exception) {
                 throw new ApiException(HttpStatus.BAD_GATEWAY, "upstream_error", name + " error " + response.statusCode());
             }

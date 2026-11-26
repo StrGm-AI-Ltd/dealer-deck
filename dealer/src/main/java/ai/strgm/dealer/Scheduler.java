@@ -62,7 +62,7 @@ public class Scheduler {
     public record Placement(Session session, ProfileRef profile, LeaseId leaseId) {}
 
     private final DeckRegistry decks;
-    private final DealerProperties props;
+    private final DealerProperties properties;
     private final Object lock = new Object();
     private final Map<SessionRef, Session> sessions = new LinkedHashMap<>();
     private final List<LeaseRequest> leaseRequests = new ArrayList<>();
@@ -70,9 +70,9 @@ public class Scheduler {
     private final Deque<EvictionEvent> evictions = new ArrayDeque<>();
     private long nextArrivalOrder;
 
-    public Scheduler(final DeckRegistry decks, final DealerProperties props) {
+    public Scheduler(final DeckRegistry decks, final DealerProperties properties) {
         this.decks = decks;
-        this.props = props;
+        this.properties = properties;
     }
 
     /** The profiles a request may use, in preference order. */
@@ -325,7 +325,7 @@ public class Scheduler {
         }
         reservations.putIfAbsent(target.key(), leaseRequest);
         final var now = System.currentTimeMillis();
-        final var minLeaseMs = Duration.ofSeconds(props.timers().minLeaseSeconds()).toMillis();
+        final var minLeaseMs = Duration.ofSeconds(properties.timers().minLeaseSeconds()).toMillis();
         for (final var victim : victims) {
             if (!victim.markEvicting(now, minLeaseMs)) {
                 continue;
@@ -348,7 +348,7 @@ public class Scheduler {
     @Scheduled(fixedDelay = TICK_INTERVAL_MS)
     public void tick() {
         synchronized (lock) {
-            final var idleMs = Duration.ofSeconds(props.timers().idleSeconds()).toMillis();
+            final var idleMs = Duration.ofSeconds(properties.timers().idleSeconds()).toMillis();
             final var now = System.currentTimeMillis();
             for (final var session : sessions.values()) {
                 final var released = session.releasedIfIdle(now, idleMs);
@@ -385,9 +385,9 @@ public class Scheduler {
         }
     }
 
-    private static void sleep(final long ms) {
+    private static void sleep(final long millis) {
         try {
-            Thread.sleep(ms);
+            Thread.sleep(millis);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
         }

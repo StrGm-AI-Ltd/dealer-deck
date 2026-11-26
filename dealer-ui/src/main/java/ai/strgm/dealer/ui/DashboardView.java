@@ -186,7 +186,7 @@ public class DashboardView extends VerticalLayout {
         });
     }
 
-    private static String seconds(final Long ms) {
-        return ms == null ? "-" : String.format("%.1f s", ms / MILLIS_PER_SECOND);
+    private static String seconds(final Long millis) {
+        return millis == null ? "-" : String.format("%.1f s", millis / MILLIS_PER_SECOND);
     }
 }

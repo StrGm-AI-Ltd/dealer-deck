@@ -80,18 +80,18 @@ public class Errors extends ResponseEntityExceptionHandler {
     }
 
     @Override
-    protected ResponseEntity<Object> handleHttpMessageNotReadable(final HttpMessageNotReadableException ex,
+    protected ResponseEntity<Object> handleHttpMessageNotReadable(final HttpMessageNotReadableException exception,
             final HttpHeaders headers, final HttpStatusCode status, final WebRequest request) {
-        final var cause = ex.getMostSpecificCause();
+        final var cause = exception.getMostSpecificCause();
         return invalid(status, cause instanceof StreamReadException ? "The request body isn't valid JSON"
                 : cause instanceof JacksonException ? "The request body doesn't match the expected schema"
                 : "The request body is missing or unreadable", null);
     }
 
     @Override
-    protected ResponseEntity<Object> handleMethodArgumentNotValid(final MethodArgumentNotValidException ex,
+    protected ResponseEntity<Object> handleMethodArgumentNotValid(final MethodArgumentNotValidException exception,
             final HttpHeaders headers, final HttpStatusCode status, final WebRequest request) {
-        final var errors = ex.getBindingResult().getFieldErrors().stream()
+        final var errors = exception.getBindingResult().getFieldErrors().stream()
                 .sorted(Comparator.comparing(FieldError::getField)).toList();
         return invalid(status, "Invalid request body: " + errors.stream()
                 .map(fieldError -> fieldError.getField() + " " + fieldError.getDefaultMessage()).collect(Collectors.joining("; ")),
@@ -99,34 +99,34 @@ public class Errors extends ResponseEntityExceptionHandler {
     }
 
     @Override
-    protected ResponseEntity<Object> handleTypeMismatch(final TypeMismatchException ex, final HttpHeaders headers,
+    protected ResponseEntity<Object> handleTypeMismatch(final TypeMismatchException exception, final HttpHeaders headers,
             final HttpStatusCode status, final WebRequest request) {
-        final var name = ex instanceof MethodArgumentTypeMismatchException mismatch ? mismatch.getName() : ex.getPropertyName();
-        return invalid(status, "Invalid value for " + name + ": " + ex.getValue(), name);
+        final var name = exception instanceof MethodArgumentTypeMismatchException mismatch ? mismatch.getName() : exception.getPropertyName();
+        return invalid(status, "Invalid value for " + name + ": " + exception.getValue(), name);
     }
 
     @Override
-    protected ResponseEntity<Object> handleMissingServletRequestParameter(final MissingServletRequestParameterException ex,
+    protected ResponseEntity<Object> handleMissingServletRequestParameter(final MissingServletRequestParameterException exception,
             final HttpHeaders headers, final HttpStatusCode status, final WebRequest request) {
-        return invalid(status, "Missing required parameter " + ex.getParameterName(), ex.getParameterName());
+        return invalid(status, "Missing required parameter " + exception.getParameterName(), exception.getParameterName());
     }
 
     @Override
-    protected ResponseEntity<Object> handleServletRequestBindingException(final ServletRequestBindingException ex,
+    protected ResponseEntity<Object> handleServletRequestBindingException(final ServletRequestBindingException exception,
             final HttpHeaders headers, final HttpStatusCode status, final WebRequest request) {
-        if (ex instanceof MissingRequestHeaderException missingHeader) {
+        if (exception instanceof MissingRequestHeaderException missingHeader) {
             return invalid(status, "Missing required header " + missingHeader.getHeaderName(), missingHeader.getHeaderName());
         }
-        return invalid(status, message(ex), null);
+        return invalid(status, message(exception), null);
     }
 
     /** Every other exception Spring MVC raises, e.g. an unknown path (404) or a wrong method (405). */
     @Override
-    protected ResponseEntity<Object> handleExceptionInternal(final Exception ex, final @Nullable Object body,
+    protected ResponseEntity<Object> handleExceptionInternal(final Exception exception, final @Nullable Object body,
             final HttpHeaders headers, final HttpStatusCode status, final WebRequest request) {
         final var type = status.isSameCodeAs(HttpStatus.NOT_FOUND) ? "not_found" : status.is4xxClientError() ? "invalid_request_error" : "server_error";
-        final var detail = ex instanceof NoResourceFoundException noResource ? "Unknown path: /" + noResource.getResourcePath()
-                : ex instanceof org.springframework.web.ErrorResponse errorResponse ? errorResponse.getBody().getDetail() : null;
+        final var detail = exception instanceof NoResourceFoundException noResource ? "Unknown path: /" + noResource.getResourcePath()
+                : exception instanceof org.springframework.web.ErrorResponse errorResponse ? errorResponse.getBody().getDetail() : null;
         final var message = detail != null ? detail : HttpStatus.valueOf(status.value()).getReasonPhrase();
         return ResponseEntity.status(status).headers(headers).contentType(MediaType.APPLICATION_JSON)
                 .body(new ErrorResponse(new ErrorBody(message, type)));

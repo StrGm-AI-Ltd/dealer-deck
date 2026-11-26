@@ -92,8 +92,8 @@ public class ChatController {
         final var clientWantsUsage = body.path("stream_options").path("include_usage").isBoolean()
                 && body.path("stream_options").path("include_usage").booleanValue();
         forward.putObject("stream_options").put("include_usage", true);
-        final var request = HttpRequest.newBuilder(URI.create(server.def().url() + "/v1/chat/completions"))
-                .header("Authorization", "Bearer " + server.def().key())
+        final var request = HttpRequest.newBuilder(URI.create(server.config().url() + "/v1/chat/completions"))
+                .header("Authorization", "Bearer " + server.config().key())
                 .header("X-Lease-Id", placement.leaseId().value())
                 .header("Content-Type", "application/json")
                 .timeout(REQUEST_TIMEOUT)
@@ -114,8 +114,8 @@ public class ChatController {
         if (response.statusCode() != HttpStatus.OK.value()) {
             scheduler.release(placement, 0, 0, 0);
             String text;
-            try (var in = response.body()) {
-                text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            try (var responseBody = response.body()) {
+                text = new String(responseBody.readAllBytes(), StandardCharsets.UTF_8);
             } catch (Exception exception) {
                 text = "";
             }

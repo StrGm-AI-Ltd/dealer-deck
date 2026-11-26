@@ -204,7 +204,7 @@ final class Session {
     SessionInfo toInfo(final long now) {
         return new SessionInfo().client(client.name()).sessionId(id).model(model)
                 .deckServer(lease == null ? null : lease.profile().server().name())
-                .serverType(lease == null ? null : lease.profile().server().def().egress())
+                .serverType(lease == null ? null : lease.profile().server().config().egress())
                 .profileId(lease == null ? null : lease.profile().profile().getId()).leaseId(lease == null ? null : lease.id())
                 .leaseState(leaseState).leaseAgeMs(lease == null || leaseReadyAt == 0 ? null : now - leaseReadyAt)
                 .idleMs(inFlight > 0 ? 0L : now - lastActivity).inFlight(inFlight).evictPending(evictPending)

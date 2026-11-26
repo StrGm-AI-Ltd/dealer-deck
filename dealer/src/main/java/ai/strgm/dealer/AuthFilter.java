@@ -14,10 +14,10 @@ import org.springframework.web.filter.OncePerRequestFilter;
 public class AuthFilter extends OncePerRequestFilter {
     private static final String BEARER_PREFIX = "Bearer ";
     static final String CLIENT = "dealer.client";
-    private final DealerProperties props;
+    private final DealerProperties properties;
 
-    public AuthFilter(final DealerProperties props) {
-        this.props = props;
+    public AuthFilter(final DealerProperties properties) {
+        this.properties = properties;
     }
 
     @Override
@@ -32,11 +32,11 @@ public class AuthFilter extends OncePerRequestFilter {
             final FilterChain chain) throws ServletException, IOException {
         final var header = request.getHeader("Authorization");
         final var key = header != null && header.startsWith(BEARER_PREFIX) ? header.substring(BEARER_PREFIX.length()) : "";
-        final var client = props.clients().stream().filter(candidate -> candidate.key().equals(key)).findFirst();
+        final var client = properties.clients().stream().filter(candidate -> candidate.key().equals(key)).findFirst();
         if (client.isPresent()) {
             request.setAttribute(CLIENT, client.get());
             chain.doFilter(request, response);
-        } else if (key.equals(props.metricsKey()) && request.getRequestURI().startsWith("/metrics")) {
+        } else if (key.equals(properties.metricsKey()) && request.getRequestURI().startsWith("/metrics")) {
             chain.doFilter(request, response);
         } else {
             response.setStatus(HttpStatus.UNAUTHORIZED.value());
