@@ -95,6 +95,11 @@ paths:
       tags: [Leases]
       operationId: acquireLease
       summary: Atomically acquire a lease on a profile for a session
+      description: >-
+        Idempotent per session and profile: if the session already holds an active (`loading` or `ready`) lease on
+        the profile, that lease is returned unchanged with `200`, instead of a second lease. A client can therefore
+        retry an acquisition whose response it never received. Once the lease is released or evicted, the next
+        acquisition grants a new one.
       requestBody:
         required: true
         content:
@@ -102,8 +107,23 @@ paths:
             schema:
               $ref: '#/components/schemas/LeaseRequest'
       responses:
+        '200':
+          description: The session already holds an active lease on this profile; that lease, unchanged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lease'
+              examples:
+                ready:
+                  $ref: '#/components/examples/LeaseReady'
         '201':
-          description: The lease. It starts in `loading` if the profile has to be loaded first.
+          description: A new lease. It starts in `loading` if the profile has to be loaded first.
+          headers:
+            Location:
+              description: The new lease's URL
+              schema:
+                type: string
+              example: /leases/lease-24af55a1
           content:
             application/json:
               schema:

@@ -66,6 +66,28 @@ public abstract class AbstractDeckServer implements DeckServer {
         return all.subList(Math.max(0, all.size() - 30), all.size()).stream().map(LeaseRecord::toApi).toList();
     }
 
+    /**
+     * Idempotent per session and profile: a session that already holds an active lease on the profile gets that
+     * lease back, so retrying an acquisition whose response was lost doesn't grant a second lease, which nothing
+     * would ever release (#65).
+     */
+    @Override
+    public final synchronized Acquisition acquire(final String profileId, final String sessionRef) {
+        final var held = activeLease(profileId, sessionRef);
+        return held != null ? new Acquisition(held.toApi(), false) : new Acquisition(grant(profileId, sessionRef), true);
+    }
+
+    /** Grants a new lease, or throws if the profile is unknown or has no capacity. Runs under this object's lock. */
+    protected abstract Lease grant(String profileId, String sessionRef);
+
+    private @Nullable LeaseRecord activeLease(final String profileId, final String sessionRef) {
+        synchronized (leases) {
+            return leases.values().stream()
+                    .filter(l -> l.active() && l.profileId.equals(profileId) && l.sessionRef.equals(sessionRef))
+                    .findFirst().orElse(null);
+        }
+    }
+
     @Override
     public Lease get(final String leaseId) {
         return record(leaseId).toApi();

@@ -121,7 +121,7 @@ public class StubServer extends AbstractDeckServer {
     }
 
     @Override
-    public synchronized Lease acquire(final String profileId, final String sessionRef) {
+    protected Lease grant(final String profileId, final String sessionRef) {
         final var d = def(profileId);
         final var blockers = leases.values().stream().filter(LeaseRecord::active)
                 .filter(l -> overlaps(def(l.profileId), d)).map(l -> l.id).toList();

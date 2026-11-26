@@ -76,7 +76,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
     }
 
     @Override
-    public synchronized Lease acquire(final String profileId, final String sessionRef) {
+    protected Lease grant(final String profileId, final String sessionRef) {
         final var m = model(profileId);
         final var active = active(profileId);
         if (m.maxLeases() != null && active.size() >= m.maxLeases()) {

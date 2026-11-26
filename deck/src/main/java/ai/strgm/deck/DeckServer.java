@@ -16,7 +16,11 @@ import tools.jackson.databind.JsonNode;
 public interface DeckServer {
     ModelProfiles modelProfiles();
 
-    Lease acquire(String profileId, String sessionRef);
+    /**
+     * Acquires a lease on {@code profileId} for {@code sessionRef}, idempotently: if the session already holds an
+     * active lease on the profile, that lease is returned unchanged ({@code created} is false).
+     */
+    Acquisition acquire(String profileId, String sessionRef);
 
     Lease get(String leaseId);
 
