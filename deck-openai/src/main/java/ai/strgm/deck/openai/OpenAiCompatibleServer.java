@@ -94,27 +94,31 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
     }
 
     @Override
-    protected Lease grant(final ProfileId profileId, final SessionRef sessionRef) {
+    protected LeaseRecord grant(final ProfileId profileId, final SessionRef sessionRef) {
         final var upstreamModel = model(profileId);
         final var active = active(profileId);
         if (upstreamModel.maxLeases() != null && active.size() >= upstreamModel.maxLeases()) {
             throw new ApiException(HttpStatus.CONFLICT, "lease_conflict",
                     "The instance budget of " + profileId + " (" + upstreamModel.maxLeases() + ") is in use", active);
         }
-        final var lease = new LeaseRecord(profileId, sessionRef, LeaseState.READY);
-        leases.put(lease.id, lease);
-        return lease.toApi();
+        return register(profileId, sessionRef, LeaseState.READY);
     }
 
     // TODO(#104): a money amount with its currency, instead of a bare double
-    private double cost(final LeaseRecord lease) {
-        final var upstreamModel = model(lease.profileId);
-        synchronized (lease) {
-            final var uncachedPromptTokens = lease.promptTokens - lease.cachedTokens;
-            return (uncachedPromptTokens * upstreamModel.inputPerMTok()
-                    + lease.cachedTokens * upstreamModel.cachedInputPerMTok()
-                    + lease.completionTokens * upstreamModel.outputPerMTok()) / TOKENS_PER_MILLION;
+    private double cost(final Lease lease) {
+        final var upstreamModel = model(lease.getProfileId());
+        final var usage = lease.getUsage();
+        if (usage == null) {
+            return 0;
         }
+        final var cachedTokens = orZero(usage.getCachedTokens());
+        return ((orZero(usage.getPromptTokens()) - cachedTokens) * upstreamModel.inputPerMTok()
+                + cachedTokens * upstreamModel.cachedInputPerMTok()
+                + orZero(usage.getCompletionTokens()) * upstreamModel.outputPerMTok()) / TOKENS_PER_MILLION;
+    }
+
+    private static long orZero(final @Nullable Long tokens) {
+        return tokens == null ? 0 : tokens;
     }
 
     @Override
@@ -131,7 +135,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
                     "Missing X-Provider-Authorization: this DECK server forwards the provider credential it receives (D104)");
         }
         final var lease = activeRecord(leaseId);
-        final var upstreamModel = model(lease.profileId);
+        final var upstreamModel = model(lease.profileId());
         final var body = (ObjectNode) request.deepCopy();
         body.put("model", upstreamModel.model().value());
         body.put("stream", true);
@@ -186,7 +190,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
                             final var usage = chunk.path("usage");
                             if (usage.isObject()) {
                                 sawUsage = true;
-                                lease.addUsage(Json.number(usage.path("prompt_tokens")),
+                                addUsage(lease, Json.number(usage.path("prompt_tokens")),
                                         Json.number(usage.path("prompt_tokens_details").path("cached_tokens")),
                                         Json.number(usage.path("completion_tokens")), false);
                             }
@@ -203,7 +207,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
                 }
             } finally {
                 if (!sawUsage) {
-                    lease.addUsage(prompt, 0, Math.max(1, chars / Json.CHARS_PER_TOKEN), true);
+                    addUsage(lease, prompt, 0, Math.max(1, chars / Json.CHARS_PER_TOKEN), true);
                 }
                 out.flush();
             }

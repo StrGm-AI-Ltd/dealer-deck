@@ -9,23 +9,26 @@ import ai.strgm.types.SessionRef;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 
-/** Mutable lease bookkeeping shared by both implementations. Guarded by the owning server's lock. */
+/**
+ * A lease a DECK server has granted. Its id, profile and session never change. Its state and usage do, and only
+ * {@link AbstractDeckServer} changes or reads them, under its lock: this class isn't thread-safe on its own.
+ */
 public final class LeaseRecord {
     /** How many of a random UUID's characters a lease id keeps. */
     private static final int ID_LENGTH = 8;
 
-    public final LeaseId id = new LeaseId("lease-" + UUID.randomUUID().toString().substring(0, ID_LENGTH));
-    public final ProfileId profileId;
-    final SessionRef sessionRef;
-    final long createdAt = System.currentTimeMillis();
-    public volatile LeaseState state;
-    public volatile @Nullable Long readyAt;
-    public long promptTokens;
-    public long cachedTokens;
-    public long completionTokens;
-    boolean estimated;
+    private final LeaseId id = new LeaseId("lease-" + UUID.randomUUID().toString().substring(0, ID_LENGTH));
+    private final ProfileId profileId;
+    private final SessionRef sessionRef;
+    private final long createdAt = System.currentTimeMillis();
+    private LeaseState state;
+    private @Nullable Long readyAt;
+    private long promptTokens;
+    private long cachedTokens;
+    private long completionTokens;
+    private boolean estimated;
 
-    public LeaseRecord(final ProfileId profileId, final SessionRef sessionRef, final LeaseState state) {
+    LeaseRecord(final ProfileId profileId, final SessionRef sessionRef, final LeaseState state) {
         this.profileId = profileId;
         this.sessionRef = sessionRef;
         this.state = state;
@@ -34,18 +37,49 @@ public final class LeaseRecord {
         }
     }
 
-    public boolean active() {
+    public LeaseId id() {
+        return id;
+    }
+
+    public ProfileId profileId() {
+        return profileId;
+    }
+
+    SessionRef sessionRef() {
+        return sessionRef;
+    }
+
+    LeaseState state() {
+        return state;
+    }
+
+    boolean active() {
         return state == LeaseState.LOADING || state == LeaseState.READY;
     }
 
-    public synchronized void addUsage(final long prompt, final long cached, final long completion, final boolean est) {
+    /** A loading lease becomes ready; a lease released or evicted while it loaded stays so. */
+    void markReady() {
+        if (state == LeaseState.LOADING) {
+            readyAt = System.currentTimeMillis();
+            state = LeaseState.READY;
+        }
+    }
+
+    /** Ends an active lease as {@code ended} (released or evicted); an inactive one stays as it is. */
+    void end(final LeaseState ended) {
+        if (active()) {
+            state = ended;
+        }
+    }
+
+    void addUsage(final long prompt, final long cached, final long completion, final boolean usageEstimated) {
         promptTokens += prompt;
         cachedTokens += cached;
         completionTokens += completion;
-        estimated |= est;
+        estimated |= usageEstimated;
     }
 
-    public synchronized Lease toApi() {
+    Lease toApi() {
         return new Lease(id, profileId, state).sessionRef(sessionRef).createdAtMs(createdAt).readyAtMs(readyAt)
                 .usage(new Usage().promptTokens(promptTokens).cachedTokens(cachedTokens)
                         .completionTokens(completionTokens).estimated(estimated));

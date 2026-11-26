@@ -7,7 +7,6 @@ import ai.strgm.deck.Json;
 import ai.strgm.deck.LeaseRecord;
 import ai.strgm.deck.api.model.DeckState;
 import ai.strgm.deck.api.model.Implementation;
-import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseReduction;
 import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.deck.api.model.Limitations;
@@ -119,8 +118,11 @@ public class StubServer extends AbstractDeckServer {
         return points.getLast();
     }
 
-    private synchronized ModelProfile toApi(final Def profile) {
-        final var isLoaded = profile.workers().stream().allMatch(worker -> profile.id().value().equals(loaded.get(worker)));
+    private ModelProfile toApi(final Def profile) {
+        final boolean isLoaded;
+        synchronized (lock) {
+            isLoaded = profile.workers().stream().allMatch(worker -> profile.id().value().equals(loaded.get(worker)));
+        }
         // a lease here takes a worker that every overlapping profile needs
         final var reductions = DEFS.stream().filter(other -> other != profile && overlaps(other, profile))
                 .map(other -> new LeaseReduction(other.id(), LEASES_PER_PROFILE)).toList();
@@ -140,41 +142,39 @@ public class StubServer extends AbstractDeckServer {
     }
 
     @Override
-    protected Lease grant(final ProfileId profileId, final SessionRef sessionRef) {
+    protected LeaseRecord grant(final ProfileId profileId, final SessionRef sessionRef) {
         final var profile = def(profileId);
-        final var blockers = leases.values().stream().filter(LeaseRecord::active)
-                .filter(other -> overlaps(def(other.profileId), profile)).map(other -> other.id).toList();
+        final var blockers = activeRecords().stream().filter(other -> overlaps(def(other.profileId()), profile)).map(LeaseRecord::id).toList();
         if (!blockers.isEmpty()) {
             throw new ApiException(HttpStatus.CONFLICT, "lease_conflict",
                     "Profile " + profileId + " is blocked by active leases", blockers);
         }
         final var isLoaded = profile.workers().stream().allMatch(worker -> profile.id().value().equals(loaded.get(worker)));
-        final var lease = new LeaseRecord(profileId, sessionRef, isLoaded ? LeaseState.READY : LeaseState.LOADING);
-        leases.put(lease.id, lease);
+        final var lease = register(profileId, sessionRef, isLoaded ? LeaseState.READY : LeaseState.LOADING);
         if (!isLoaded) {
             profile.workers().forEach(worker -> loaded.put(worker, LOADING_PREFIX + profile.id()));
             Thread.ofVirtual().start(() -> {
                 sleep(scaled(profile.loadMs()));
-                synchronized (this) {
+                synchronized (lock) {
                     profile.workers().forEach(worker -> loaded.put(worker, profile.id().value()));
-                    if (lease.state == LeaseState.LOADING) {
-                        lease.readyAt = System.currentTimeMillis();
-                        lease.state = LeaseState.READY;
-                    }
+                    markReady(lease);
                 }
             });
         }
-        return lease.toApi();
+        return lease;
     }
 
     @Override
-    public synchronized DeckState state() {
-        final var workers = loaded.entrySet().stream().map(worker -> {
-            final var busy = leases.values().stream()
-                    .anyMatch(lease -> lease.active() && def(lease.profileId).workers().contains(worker.getKey()));
-            return new Worker().id(worker.getKey()).loadedProfile(worker.getValue())
-                    .state(worker.getValue().startsWith(LOADING_PREFIX) ? WorkerState.LOADING : busy ? WorkerState.LEASED : WorkerState.IDLE);
-        }).toList();
+    public DeckState state() {
+        final List<Worker> workers;
+        synchronized (lock) {
+            final var active = activeRecords();
+            workers = loaded.entrySet().stream().map(worker -> {
+                final var busy = active.stream().anyMatch(lease -> def(lease.profileId()).workers().contains(worker.getKey()));
+                return new Worker().id(worker.getKey()).loadedProfile(worker.getValue())
+                        .state(worker.getValue().startsWith(LOADING_PREFIX) ? WorkerState.LOADING : busy ? WorkerState.LEASED : WorkerState.IDLE);
+            }).toList();
+        }
         return new DeckState(props.serverName(), Implementation.STUB, modelProfiles().getProfiles(), recent())
                 .workers(workers).spendUsd(0.0);
     }
@@ -182,7 +182,7 @@ public class StubServer extends AbstractDeckServer {
     @Override
     public StreamingResponseBody chat(final LeaseId leaseId, final @Nullable String providerAuthorization, final JsonNode request) {
         final var lease = activeRecord(leaseId);
-        final var profile = def(lease.profileId);
+        final var profile = def(lease.profileId());
         final var maxTokens = (int) Math.max(1, Math.min(Json.number(request.path("max_tokens")) == 0 ? DEFAULT_MAX_TOKENS
                 : Json.number(request.path("max_tokens")), WORDS.length));
         final var includeUsage = Json.bool(request.path("stream_options").path("include_usage"));
@@ -190,11 +190,11 @@ public class StubServer extends AbstractDeckServer {
         final var speed = speedAt(profile, prompt);
         final StreamingResponseBody body = out -> {
             final var deadline = System.currentTimeMillis() + LOADING_WAIT.toMillis();
-            while (lease.state == LeaseState.LOADING && System.currentTimeMillis() < deadline) {
+            while (isLoading(lease) && System.currentTimeMillis() < deadline) {
                 sleep(LOADING_POLL_MS);
             }
             sleep(scaled(profile.ttftMs()) + Math.round(prompt * MILLIS_PER_SECOND / speed.prefillTps() * stub.timeFactor()));
-            final var id = "chatcmpl-" + lease.id;
+            final var id = "chatcmpl-" + lease.id();
             final var created = Instant.now().getEpochSecond();
             for (int tokenIndex = 0; tokenIndex < maxTokens; tokenIndex++) {
                 final var chunk = mapper.createObjectNode();
@@ -226,7 +226,7 @@ public class StubServer extends AbstractDeckServer {
                 counts.putObject("prompt_tokens_details").put("cached_tokens", 0);
                 write(out, usage.toString());
             }
-            lease.addUsage(prompt, 0, maxTokens, false);
+            addUsage(lease, prompt, 0, maxTokens, false);
             out.write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
             out.flush();
         };
