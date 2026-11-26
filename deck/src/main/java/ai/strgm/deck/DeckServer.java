@@ -4,6 +4,7 @@ import ai.strgm.deck.api.model.DeckState;
 import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.ModelProfiles;
 import java.util.List;
+import org.jspecify.annotations.Nullable;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import tools.jackson.databind.JsonNode;
 
@@ -20,7 +21,7 @@ public interface DeckServer {
     Lease get(String leaseId);
 
     /** The active leases, oldest first; only those on {@code profileId} and of {@code sessionRef}, if given. */
-    List<Lease> leases(String profileId, String sessionRef);
+    List<Lease> leases(@Nullable String profileId, @Nullable String sessionRef);
 
     void release(String leaseId);
 
@@ -29,5 +30,5 @@ public interface DeckServer {
     DeckState state();
 
     /** Streams the completion; throws {@link ApiException} or {@link UpstreamException} before streaming starts. */
-    StreamingResponseBody chat(String leaseId, String providerAuthorization, JsonNode request);
+    StreamingResponseBody chat(String leaseId, @Nullable String providerAuthorization, JsonNode request);
 }

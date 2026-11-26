@@ -8,6 +8,7 @@ import ai.strgm.deck.api.model.ModelProfiles;
 import ai.strgm.deck.api.server.LeasesApi;
 import ai.strgm.deck.api.server.MetricsApi;
 import ai.strgm.deck.api.server.ModelProfilesApi;
+import org.jspecify.annotations.Nullable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
@@ -32,7 +33,7 @@ public class DeckApiController implements ModelProfilesApi, LeasesApi, MetricsAp
     }
 
     @Override
-    public ResponseEntity<Leases> listLeases(final String profileId, final String sessionRef) {
+    public ResponseEntity<Leases> listLeases(final @Nullable String profileId, final @Nullable String sessionRef) {
         return ResponseEntity.ok(new Leases(server.leases(profileId, sessionRef)));
     }
 

@@ -9,7 +9,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import org.jspecify.annotations.Nullable;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -24,7 +26,7 @@ import tools.jackson.databind.ObjectMapper;
 public class DeckRegistry {
 
     public record Server(DealerProperties.ServerDef def, ModelProfilesApi modelProfiles, LeasesApi leases,
-            String providerAuthorization) {
+            @Nullable String providerAuthorization) {
         public boolean external() {
             return "external".equals(def.egress());
         }
@@ -80,7 +82,7 @@ public class DeckRegistry {
         final List<ProfileRef> next = new ArrayList<>();
         for (final var s : servers.values()) {
             try {
-                final var offered = s.modelProfiles().getModelProfiles().getBody();
+                final var offered = Objects.requireNonNull(s.modelProfiles().getModelProfiles().getBody(), "no model profiles in the response");
                 offered.getProfiles().forEach(p -> next.add(new ProfileRef(s, p)));
                 reachable.put(s.name(), true);
             } catch (Exception e) {
@@ -105,7 +107,8 @@ public class DeckRegistry {
 
     public Lease acquire(final ProfileRef p, final String sessionRef) throws Blocked {
         try {
-            return p.server().leases().acquireLease(new LeaseRequest(p.profile().getId(), sessionRef)).getBody();
+            return Objects.requireNonNull(p.server().leases().acquireLease(new LeaseRequest(p.profile().getId(), sessionRef)).getBody(),
+                    "no lease in the response");
         } catch (HttpClientErrorException e) {
             if (e.getStatusCode().value() == 409) {
                 final var node = mapper.readTree(e.getResponseBodyAsString()).path("blockers");
@@ -120,7 +123,7 @@ public class DeckRegistry {
     }
 
     public Lease lease(final Server s, final String leaseId) {
-        return s.leases().getLease(leaseId).getBody();
+        return Objects.requireNonNull(s.leases().getLease(leaseId).getBody(), "no lease in the response");
     }
 
     public void release(final Server s, final String leaseId) {

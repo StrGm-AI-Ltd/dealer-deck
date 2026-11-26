@@ -4,6 +4,7 @@ import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.deck.api.model.Usage;
 import java.util.UUID;
+import org.jspecify.annotations.Nullable;
 
 /** Mutable lease bookkeeping shared by both implementations. Guarded by the owning server's lock. */
 public final class LeaseRecord {
@@ -12,7 +13,7 @@ public final class LeaseRecord {
     final String sessionRef;
     final long createdAt = System.currentTimeMillis();
     public volatile LeaseState state;
-    public volatile Long readyAt;
+    public volatile @Nullable Long readyAt;
     public long promptTokens;
     public long cachedTokens;
     public long completionTokens;

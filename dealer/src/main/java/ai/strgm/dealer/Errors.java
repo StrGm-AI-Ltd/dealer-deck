@@ -47,12 +47,20 @@ public class Errors extends ResponseEntityExceptionHandler {
         return of(status, "invalid_request_error", message, param);
     }
 
+    /** An exception's message, or its class name when it has none. */
+    private static String message(final Throwable e) {
+        final var m = e.getMessage();
+        return m != null ? m : e.getClass().getSimpleName();
+    }
+
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<Object> handle(final ApiException e) {
-        if (e.body != null) {
-            return ResponseEntity.status(e.status).contentType(MediaType.APPLICATION_JSON).body(e.body);
+        final var raw = e.body;
+        if (raw != null) {
+            return ResponseEntity.status(e.status).contentType(MediaType.APPLICATION_JSON).body(raw);
         }
-        return of(e.status, e.type, e.getMessage(), e.param);
+        final var type = e.type;
+        return of(e.status, type != null ? type : "server_error", message(e), e.param);
     }
 
     /** A parameter outside its documented constraints, from method validation. */
@@ -109,12 +117,12 @@ public class Errors extends ResponseEntityExceptionHandler {
         if (ex instanceof MissingRequestHeaderException m) {
             return invalid(status, "Missing required header " + m.getHeaderName(), m.getHeaderName());
         }
-        return invalid(status, ex.getMessage(), null);
+        return invalid(status, message(ex), null);
     }
 
     /** Every other exception Spring MVC raises, e.g. an unknown path (404) or a wrong method (405). */
     @Override
-    protected ResponseEntity<Object> handleExceptionInternal(final Exception ex, final Object body,
+    protected ResponseEntity<Object> handleExceptionInternal(final Exception ex, final @Nullable Object body,
             final HttpHeaders headers, final HttpStatusCode status, final WebRequest request) {
         final var type = status.value() == 404 ? "not_found" : status.is4xxClientError() ? "invalid_request_error" : "server_error";
         final var detail = ex instanceof NoResourceFoundException n ? "Unknown path: /" + n.getResourcePath()
