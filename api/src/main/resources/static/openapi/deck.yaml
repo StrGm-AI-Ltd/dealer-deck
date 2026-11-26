@@ -925,9 +925,14 @@ components:
           description: The profile loaded on this worker; `loading <profile>` while one is being loaded
           example: small-a
         state:
-          type: string
-          description: '`idle`, `leased` or `loading`'
-          example: leased
+          $ref: '#/components/schemas/WorkerState'
+    WorkerState:
+      type: string
+      description: >-
+        A simulated worker's state (stub only): `loading` while a profile loads onto it, `leased` while an
+        active lease uses it, otherwise `idle`
+      enum: [idle, leased, loading]
+      example: leased
     DeckState:
       type: object
       required: [server, implementation, profiles, leases]

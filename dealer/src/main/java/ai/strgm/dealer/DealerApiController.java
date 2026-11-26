@@ -5,7 +5,6 @@ import ai.strgm.dealer.api.model.DealerState;
 import ai.strgm.dealer.api.model.Model;
 import ai.strgm.dealer.api.model.ModelList;
 import ai.strgm.dealer.api.model.ServerInfo;
-import ai.strgm.dealer.api.model.ServerType;
 import ai.strgm.dealer.api.server.MetricsApi;
 import ai.strgm.dealer.api.server.ModelsApi;
 import java.time.Instant;
@@ -38,7 +37,7 @@ public class DealerApiController implements ModelsApi, MetricsApi {
         }
         decks.profiles().forEach(profileRef -> data.add(new Model(profileRef.profile().getId(), "model", startedAt,
                 profileRef.server().name()).deckServer(profileRef.server().name())
-                .serverType(ServerType.fromValue(profileRef.server().def().egress()))
+                .serverType(profileRef.server().def().egress())
                 .contextWindow(profileRef.profile().getContextWindow()).virtual(false)));
         return ResponseEntity.ok(new ModelList("list", data));
     }
@@ -50,7 +49,7 @@ public class DealerApiController implements ModelsApi, MetricsApi {
                 .toList();
         final var servers = decks.servers().values().stream()
                 .map(server -> new ServerInfo().name(server.name()).url(server.def().url())
-                        .serverType(ServerType.fromValue(server.def().egress())).reachable(decks.reachable(server.name()))
+                        .serverType(server.def().egress()).reachable(decks.reachable(server.name()))
                         .profiles((int) decks.profiles().stream().filter(profileRef -> profileRef.server() == server).count()))
                 .toList();
         return ResponseEntity.ok(new DealerState().clients(clients).servers(servers).queue(scheduler.queue())

@@ -18,6 +18,7 @@ import ai.strgm.deck.api.model.Quantization;
 import ai.strgm.deck.api.model.Readiness;
 import ai.strgm.deck.api.model.SpeedPoint;
 import ai.strgm.deck.api.model.Worker;
+import ai.strgm.deck.api.model.WorkerState;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
@@ -55,6 +56,8 @@ public class StubServer extends AbstractDeckServer {
     private static final Duration LOADING_WAIT = Duration.ofSeconds(60);
     private static final long LOADING_POLL_MS = 100;
     private static final double MILLIS_PER_SECOND = 1000.0;
+    /** A worker's loaded profile, while a profile is loading onto it, is {@code loading <profile id>}. */
+    private static final String LOADING_PREFIX = "loading ";
 
     private static final List<Speed> SMALL_SPEEDS = List.of(
             new Speed(4096, 800, 40), new Speed(16384, 600, 34), new Speed(32768, 450, 28));
@@ -145,7 +148,7 @@ public class StubServer extends AbstractDeckServer {
         final var lease = new LeaseRecord(profileId, sessionRef, isLoaded ? LeaseState.READY : LeaseState.LOADING);
         leases.put(lease.id, lease);
         if (!isLoaded) {
-            profile.workers().forEach(worker -> loaded.put(worker, "loading " + profile.id()));
+            profile.workers().forEach(worker -> loaded.put(worker, LOADING_PREFIX + profile.id()));
             Thread.ofVirtual().start(() -> {
                 sleep(scaled(profile.loadMs()));
                 synchronized (this) {
@@ -166,7 +169,7 @@ public class StubServer extends AbstractDeckServer {
             final var busy = leases.values().stream()
                     .anyMatch(lease -> lease.active() && def(lease.profileId).workers().contains(worker.getKey()));
             return new Worker().id(worker.getKey()).loadedProfile(worker.getValue())
-                    .state(worker.getValue().startsWith("loading") ? "loading" : busy ? "leased" : "idle");
+                    .state(worker.getValue().startsWith(LOADING_PREFIX) ? WorkerState.LOADING : busy ? WorkerState.LEASED : WorkerState.IDLE);
         }).toList();
         return new DeckState(props.serverName(), Implementation.STUB, modelProfiles().getProfiles(), recent())
                 .workers(workers).spendUsd(0.0);

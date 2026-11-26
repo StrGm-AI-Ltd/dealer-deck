@@ -1,5 +1,6 @@
 package ai.strgm.dealer;
 
+import ai.strgm.dealer.api.model.ServerType;
 import ai.strgm.deck.api.client.LeasesApi;
 import ai.strgm.deck.api.client.ModelProfilesApi;
 import ai.strgm.deck.api.model.Lease;
@@ -35,7 +36,7 @@ public class DeckRegistry {
     public record Server(DealerProperties.ServerDef def, ModelProfilesApi modelProfiles, LeasesApi leases,
             @Nullable String providerAuthorization) {
         public boolean external() {
-            return "external".equals(def.egress());
+            return def.egress() == ServerType.EXTERNAL;
         }
 
         public String name() {

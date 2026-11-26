@@ -126,6 +126,14 @@ components:
         `external` servers. Null where no DECK server applies, e.g. on virtual models.
       enum: [local, external]
       example: local
+    SessionLeaseState:
+      type: string
+      description: >-
+        Where a session's lease stands: `none` before its first lease; `loading` and `ready` while it
+        holds one; `evicting` while a higher-priority client waits for its requests in flight to end;
+        `evicted`, `released` (for a model switch) or `released_idle` once it no longer holds one.
+      enum: [none, loading, ready, evicting, evicted, released, released_idle]
+      example: ready
     Model:
       type: object
       required: [id, object, created, owned_by]
@@ -216,7 +224,7 @@ components:
         lease_id:
           type: string
         lease_state:
-          type: string
+          $ref: '#/components/schemas/SessionLeaseState'
         lease_age_ms:
           type: integer
           format: int64

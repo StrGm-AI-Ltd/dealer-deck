@@ -4,8 +4,8 @@ import ai.strgm.dealer.DealerProperties.ClientDef;
 import ai.strgm.dealer.DeckRegistry.ProfileRef;
 import ai.strgm.dealer.api.model.EvictionEvent;
 import ai.strgm.dealer.api.model.QueuedRequest;
-import ai.strgm.dealer.api.model.ServerType;
 import ai.strgm.dealer.api.model.SessionInfo;
+import ai.strgm.dealer.api.model.SessionLeaseState;
 import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.deck.api.model.ModelProfile;
@@ -66,7 +66,7 @@ public class Scheduler {
         @Nullable String model;
         @Nullable ProfileRef profile;
         @Nullable String leaseId;
-        String leaseState = "none";
+        SessionLeaseState leaseState = SessionLeaseState.NONE;
         long leaseReadyAt;
         long lastActivity = System.currentTimeMillis();
         int inFlight;
@@ -243,7 +243,7 @@ public class Scheduler {
         final var deadline = System.currentTimeMillis() + READINESS_TIMEOUT.toMillis();
         while (System.currentTimeMillis() < deadline) {
             synchronized (lock) {
-                if (LeaseState.READY.getValue().equals(session.leaseState)) {
+                if (session.leaseState == SessionLeaseState.READY) {
                     return;
                 }
             }
@@ -260,7 +260,7 @@ public class Scheduler {
     }
 
     private static void markReady(final Session session, final Lease lease) {
-        session.leaseState = LeaseState.READY.getValue();
+        session.leaseState = SessionLeaseState.READY;
         session.leaseReadyAt = lease.getReadyAtMs() == null ? System.currentTimeMillis() : lease.getReadyAtMs();
     }
 
@@ -289,7 +289,7 @@ public class Scheduler {
         return price == null ? 0 : price;
     }
 
-    private void clearLease(final Session session, final String state) {
+    private void clearLease(final Session session, final SessionLeaseState state) {
         session.leaseId = null;
         session.profile = null;
         session.evictPending = false;
@@ -303,7 +303,7 @@ public class Scheduler {
             decks.evict(held.server(), heldLease);
             log.info("Evicted {} from {}", session.ref(), held.key());
         }
-        clearLease(session, "evicted");
+        clearLease(session, SessionLeaseState.EVICTED);
     }
 
     private boolean reservedForOther(final ProfileRef candidate, final LeaseRequest leaseRequest) {
@@ -344,7 +344,7 @@ public class Scheduler {
                 final var heldLease = session.leaseId;
                 if (held != null && heldLease != null && session.inFlight == 0) {
                     decks.release(held.server(), heldLease);
-                    clearLease(session, "released");
+                    clearLease(session, SessionLeaseState.RELEASED);
                 }
             }
             leaseRequests.sort(Comparator.<LeaseRequest>comparingInt(queued -> -queued.session.client.priority())
@@ -371,7 +371,7 @@ public class Scheduler {
                         if (lease.getState() == LeaseState.READY) {
                             markReady(session, lease);
                         } else {
-                            session.leaseState = lease.getState().getValue();
+                            session.leaseState = SessionLeaseState.fromValue(lease.getState().getValue());
                         }
                         session.inFlight++;
                         session.pending = null;
@@ -416,7 +416,7 @@ public class Scheduler {
                 continue;
             }
             victim.evictPending = true;
-            victim.leaseState = "evicting";
+            victim.leaseState = SessionLeaseState.EVICTING;
             evictions.addLast(new EvictionEvent().createdAt(Instant.ofEpochMilli(now).getEpochSecond()).victimClient(victim.client.name()).victimSession(victim.id)
                     .deckServer(target.server().name()).profileId(victim.profile == null ? null : victim.profile.profile().getId()).byClient(leaseRequest.session.client.name())
                     .reason("priority " + leaseRequest.session.client.priority() + " > " + victim.client.priority() + " needs " + target.profile().getId()));
@@ -442,7 +442,7 @@ public class Scheduler {
                 if (held != null && heldLease != null && session.inFlight == 0 && !session.evictPending && now - session.lastActivity > idleMs) {
                     decks.release(held.server(), heldLease);
                     log.info("Released idle lease of {} on {}", session.ref(), held.key());
-                    clearLease(session, "released (idle)");
+                    clearLease(session, SessionLeaseState.RELEASED_IDLE);
                 }
             }
         }
@@ -465,7 +465,7 @@ public class Scheduler {
             final var now = System.currentTimeMillis();
             return sessions.values().stream().map(session -> new SessionInfo().client(session.client.name()).sessionId(session.id).model(session.model)
                     .deckServer(session.profile == null ? null : session.profile.server().name())
-                    .serverType(session.profile == null ? null : ServerType.fromValue(session.profile.server().def().egress()))
+                    .serverType(session.profile == null ? null : session.profile.server().def().egress())
                     .profileId(session.profile == null ? null : session.profile.profile().getId()).leaseId(session.leaseId)
                     .leaseState(session.leaseState).leaseAgeMs(session.leaseId == null || session.leaseReadyAt == 0 ? null : now - session.leaseReadyAt)
                     .idleMs(session.inFlight > 0 ? 0L : now - session.lastActivity).inFlight(session.inFlight).evictPending(session.evictPending)
