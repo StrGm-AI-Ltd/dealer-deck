@@ -122,22 +122,22 @@ public class StubServer extends AbstractDeckServer {
 
     @Override
     protected Lease grant(final String profileId, final String sessionRef) {
-        final var d = def(profileId);
+        final var profile = def(profileId);
         final var blockers = leases.values().stream().filter(LeaseRecord::active)
-                .filter(l -> overlaps(def(l.profileId), d)).map(l -> l.id).toList();
+                .filter(other -> overlaps(def(other.profileId), profile)).map(other -> other.id).toList();
         if (!blockers.isEmpty()) {
             throw new ApiException(HttpStatus.CONFLICT, "lease_conflict",
                     "Profile " + profileId + " is blocked by active leases", blockers);
         }
-        final var isLoaded = d.workers().stream().allMatch(w -> d.id().equals(loaded.get(w)));
+        final var isLoaded = profile.workers().stream().allMatch(worker -> profile.id().equals(loaded.get(worker)));
         final var lease = new LeaseRecord(profileId, sessionRef, isLoaded ? LeaseState.READY : LeaseState.LOADING);
         leases.put(lease.id, lease);
         if (!isLoaded) {
-            d.workers().forEach(w -> loaded.put(w, "loading " + d.id()));
+            profile.workers().forEach(worker -> loaded.put(worker, "loading " + profile.id()));
             Thread.ofVirtual().start(() -> {
-                sleep(scaled(d.loadMs()));
+                sleep(scaled(profile.loadMs()));
                 synchronized (this) {
-                    d.workers().forEach(w -> loaded.put(w, d.id()));
+                    profile.workers().forEach(worker -> loaded.put(worker, profile.id()));
                     if (lease.state == LeaseState.LOADING) {
                         lease.readyAt = System.currentTimeMillis();
                         lease.state = LeaseState.READY;

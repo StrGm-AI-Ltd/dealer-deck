@@ -43,6 +43,9 @@ import tools.jackson.databind.node.ObjectNode;
  */
 @Component
 public class OpenAiCompatibleServer extends AbstractDeckServer {
+    /** Prices are per million tokens. */
+    private static final double TOKENS_PER_MILLION = 1_000_000.0;
+
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
     private final UpstreamProperties upstream;
     private final String prefix;
@@ -77,22 +80,24 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
 
     @Override
     protected Lease grant(final String profileId, final String sessionRef) {
-        final var m = model(profileId);
+        final var upstreamModel = model(profileId);
         final var active = active(profileId);
-        if (m.maxLeases() != null && active.size() >= m.maxLeases()) {
+        if (upstreamModel.maxLeases() != null && active.size() >= upstreamModel.maxLeases()) {
             throw new ApiException(HttpStatus.CONFLICT, "lease_conflict",
-                    "The instance budget of " + profileId + " (" + m.maxLeases() + ") is in use", active);
+                    "The instance budget of " + profileId + " (" + upstreamModel.maxLeases() + ") is in use", active);
         }
         final var lease = new LeaseRecord(profileId, sessionRef, LeaseState.READY);
         leases.put(lease.id, lease);
         return lease.toApi();
     }
 
-    private double cost(final LeaseRecord l) {
-        final var m = model(l.profileId);
-        synchronized (l) {
-            return ((l.promptTokens - l.cachedTokens) * m.inputPerMTok() + l.cachedTokens * m.cachedInputPerMTok()
-                    + l.completionTokens * m.outputPerMTok()) / 1_000_000.0;
+    private double cost(final LeaseRecord lease) {
+        final var upstreamModel = model(lease.profileId);
+        synchronized (lease) {
+            final var uncachedPromptTokens = lease.promptTokens - lease.cachedTokens;
+            return (uncachedPromptTokens * upstreamModel.inputPerMTok()
+                    + lease.cachedTokens * upstreamModel.cachedInputPerMTok()
+                    + lease.completionTokens * upstreamModel.outputPerMTok()) / TOKENS_PER_MILLION;
         }
     }
 

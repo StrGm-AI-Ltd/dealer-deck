@@ -83,7 +83,7 @@ public abstract class AbstractDeckServer implements DeckServer {
     private @Nullable LeaseRecord activeLease(final String profileId, final String sessionRef) {
         synchronized (leases) {
             return leases.values().stream()
-                    .filter(l -> l.active() && l.profileId.equals(profileId) && l.sessionRef.equals(sessionRef))
+                    .filter(lease -> lease.active() && lease.profileId.equals(profileId) && lease.sessionRef.equals(sessionRef))
                     .findFirst().orElse(null);
         }
     }
