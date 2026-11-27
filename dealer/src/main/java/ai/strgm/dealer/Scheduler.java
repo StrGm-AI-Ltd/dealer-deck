@@ -76,6 +76,8 @@ public class Scheduler {
     }
 
     /** The profiles a request may use, in preference order. */
+    // TODO(#62): limit them to the DECK servers and model profiles in the client's stored configuration, instead of
+    // every profile, with external servers only behind the client's external-routing flag
     List<ProfileRef> candidates(final ClientDef client, final ModelName model) {
         final var all = decks.profiles();
         final var auto = AUTO.matcher(model.value());
@@ -124,6 +126,11 @@ public class Scheduler {
         }
         while (true) {
             final LeaseRequest leaseRequest;
+            // The choice below is made under the lock, so two requests can't both queue a lease request. The waiting
+            // happens outside it, because the dispatch() that places a lease request later, from release() or tick(),
+            // needs the lock too. queuedAhead says whose lease request it is. The owner dispatches it and gets its
+            // placement, already counted in flight, so the new lease can't be released or evicted before it's used;
+            // only the owner cancels it. A request queued behind another's waits for it to settle, then tries again.
             final boolean queuedAhead;
             synchronized (lock) {
                 if (session.pending() != null) {
