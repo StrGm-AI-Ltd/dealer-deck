@@ -25,11 +25,9 @@ public final class Json {
 
     /** A rough token estimate: characters / {@value #CHARS_PER_TOKEN}. */
     public static long promptTokens(final JsonNode chatRequest) {
-        final var messages = chatRequest.path("messages");
-        long chars = 0;
-        for (int messageIndex = 0; messageIndex < messages.size(); messageIndex++) {
-            chars += text(messages.get(messageIndex).path("content")).length();
-        }
+        final var chars = chatRequest.path("messages").valueStream()
+                .mapToLong(message -> text(message.path("content")).length())
+                .sum();
         return max(1, chars / CHARS_PER_TOKEN);
     }
 }

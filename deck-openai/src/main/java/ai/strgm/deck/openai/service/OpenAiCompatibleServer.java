@@ -149,10 +149,9 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
                                         Json.number(usage.path("prompt_tokens_details").path("cached_tokens")),
                                         Json.number(usage.path("completion_tokens")), false);
                             }
-                            final var choices = chunk.path("choices");
-                            for (int choiceIndex = 0; choiceIndex < choices.size(); choiceIndex++) {
-                                completionChars += Json.text(choices.get(choiceIndex).path("delta").path("content")).length();
-                            }
+                            completionChars += chunk.path("choices").valueStream()
+                                    .mapToLong(choice -> Json.text(choice.path("delta").path("content")).length())
+                                    .sum();
                         }
                     }
                     out.write((line + "\n").getBytes(UTF_8));

@@ -13,6 +13,7 @@ import ai.strgm.dealer.config.DealerProperties.ClientConfig;
 import ai.strgm.dealer.exception.LeaseBlockedException;
 import ai.strgm.dealer.exception.LeaseUnavailableException;
 import ai.strgm.dealer.model.AutoTier;
+import ai.strgm.dealer.model.DeckServerRef;
 import ai.strgm.dealer.model.Eviction;
 import ai.strgm.dealer.model.LeaseRequest;
 import ai.strgm.dealer.model.LeaseRequestSnapshot;
@@ -35,6 +36,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.concurrent.ExecutionException;
 import java.util.regex.Pattern;
@@ -268,26 +270,19 @@ public class Scheduler {
     }
 
     private boolean reservedForOther(final ModelProfileRef candidate, final LeaseRequest leaseRequest) {
-        for (final var reservation : reservations.entrySet()) {
-            if (reservation.getValue() == leaseRequest) {
-                continue;
-            }
-            final var reservedProfileRef = decks.profiles().stream()
-                    .filter(profileRef -> profileRef.key().equals(reservation.getKey()))
-                    .findFirst()
-                    .orElse(null);
-            if (reservedProfileRef == null) {
-                continue;
-            }
-            if (reservedProfileRef.key().equals(candidate.key())) {
-                return true;
-            }
-            if (reservedProfileRef.serverRef() == candidate.serverRef() && (reservedProfileRef.profile().reduces(candidate.profile().id())
-                    || candidate.profile().reduces(reservedProfileRef.profile().id()))) {
-                return true;
-            }
-        }
-        return false;
+        return reservations.entrySet().stream()
+                .filter(reservation -> reservation.getValue() != leaseRequest)
+                .flatMap(reservation -> profileRefFor(reservation.getKey()).stream())
+                .anyMatch(reservedProfileRef -> reservedProfileRef.key().equals(candidate.key())
+                        || (reservedProfileRef.serverRef() == candidate.serverRef() && (reservedProfileRef.profile().reduces(candidate.profile().id())
+                                || candidate.profile().reduces(reservedProfileRef.profile().id()))));
+    }
+
+    /** The model profile whose key is {@code profileKey}, if a DECK server still offers it. */
+    private Optional<ModelProfileRef> profileRefFor(final String profileKey) {
+        return decks.profiles().stream()
+                .filter(profileRef -> profileRef.key().equals(profileKey))
+                .findFirst();
     }
 
     /** Places every placeable lease request, in priority order, and starts evictions where client priority allows. */
@@ -296,12 +291,12 @@ public class Scheduler {
             // A lease request whose session still holds a lease is a model switch, or a request that came while the
             // lease was being evicted. Once the session's requests in flight end, the old lease goes first: released
             // here for a model switch, evicted by endRequest() for an eviction. So a session never holds two leases (#64).
-            for (final var leaseRequest : leaseRequests) {
+            leaseRequests.forEach(leaseRequest -> {
                 final var releasedLease = leaseRequest.session().clearLeaseForSwitch();
                 if (releasedLease != null) {
                     decks.releaseLease(releasedLease.profileRef().serverRef(), releasedLease.id());
                 }
-            }
+            });
             leaseRequests.sort(comparing((LeaseRequest queued) -> queued.session().clientConfig().priority(), reverseOrder())
                     .thenComparing(LeaseRequest::requestPriority, reverseOrder()).thenComparingLong(LeaseRequest::arrivalOrder));
             final var queue = leaseRequests.iterator();
@@ -344,35 +339,39 @@ public class Scheduler {
     }
 
     private void considerEviction(final LeaseRequest leaseRequest, final ModelProfileRef target, final List<LeaseId> blockers) {
-        final List<Session> victims = new ArrayList<>();
-        for (final var leaseId : blockers) {
-            final var leaseHolder = sessions.values().stream()
-                    .filter(session -> session.holds(leaseId, target.serverRef()))
-                    .findFirst();
-            if (leaseHolder.isEmpty() || leaseHolder.get().clientConfig().priority().compareTo(leaseRequest.session().clientConfig().priority()) >= 0) {
-                return;
-            }
-            victims.add(leaseHolder.get());
+        final var victims = blockers.stream()
+                .flatMap(leaseId -> leaseHolderOf(leaseId, target.serverRef()).stream())
+                .filter(leaseHolder -> leaseHolder.clientConfig().priority().compareTo(leaseRequest.session().clientConfig().priority()) < 0)
+                .toList();
+        // evicts only when every blocking lease has a holder of lower client priority than the request's
+        if (victims.size() < blockers.size()) {
+            return;
         }
         reservations.putIfAbsent(target.key(), leaseRequest);
         final var now = Instant.now();
         final var minLease = Duration.ofSeconds(properties.timers().minLeaseSeconds());
-        for (final var victim : victims) {
-            if (!victim.markEvicting(now, minLease)) {
-                continue;
+        victims.forEach(victim -> {
+            if (victim.markEvicting(now, minLease)) {
+                evictions.addLast(new Eviction(now, victim.clientConfig().name(), victim.id(), target.serverRef().name(),
+                        mapNullable(victim.heldLease(), victimLease -> victimLease.profileRef().profile().id()),
+                        leaseRequest.session().clientConfig().name(),
+                        "priority " + leaseRequest.session().clientConfig().priority() + " > " + victim.clientConfig().priority() + " needs " + target.profile().id()));
+                while (evictions.size() > properties.evictionHistory()) {
+                    evictions.removeFirst();
+                }
+                log.info("Evicting {} for {} (needs {})", victim.ref(), leaseRequest.session().ref(), target.key());
+                if (victim.inFlight() == 0) {
+                    evictLeaseNow(victim);
+                }
             }
-            evictions.addLast(new Eviction(now, victim.clientConfig().name(), victim.id(), target.serverRef().name(),
-                    mapNullable(victim.heldLease(), victimLease -> victimLease.profileRef().profile().id()),
-                    leaseRequest.session().clientConfig().name(),
-                    "priority " + leaseRequest.session().clientConfig().priority() + " > " + victim.clientConfig().priority() + " needs " + target.profile().id()));
-            while (evictions.size() > properties.evictionHistory()) {
-                evictions.removeFirst();
-            }
-            log.info("Evicting {} for {} (needs {})", victim.ref(), leaseRequest.session().ref(), target.key());
-            if (victim.inFlight() == 0) {
-                evictLeaseNow(victim);
-            }
-        }
+        });
+    }
+
+    /** The session holding {@code leaseId} on {@code serverRef}, if any. */
+    private Optional<Session> leaseHolderOf(final LeaseId leaseId, final DeckServerRef serverRef) {
+        return sessions.values().stream()
+                .filter(session -> session.holds(leaseId, serverRef))
+                .findFirst();
     }
 
     /** Releases leases idle for longer than N, then re-dispatches (evictions wait for M to pass). */
@@ -381,13 +380,13 @@ public class Scheduler {
         synchronized (lock) {
             final var idle = Duration.ofSeconds(properties.timers().idleSeconds());
             final var now = Instant.now();
-            for (final var session : sessions.values()) {
+            sessions.values().forEach(session -> {
                 final var releasedLease = session.clearLeaseIfIdle(now, idle);
                 if (releasedLease != null) {
                     decks.releaseLease(releasedLease.profileRef().serverRef(), releasedLease.id());
                     log.info("Released idle lease of {} on {}", session.ref(), releasedLease.profileRef().key());
                 }
-            }
+            });
         }
         dispatch();
     }

@@ -161,13 +161,13 @@ public class Errors extends ResponseEntityExceptionHandler {
     /** Where in the body the value Jackson couldn't read is, e.g. {@code messages[0].role}; null if Jackson didn't say. */
     private static @Nullable String fieldPathOf(final JacksonException exception) {
         final var fieldPath = new StringBuilder();
-        for (final var reference : exception.getPath()) {
+        exception.getPath().forEach(reference -> {
             if (reference.getPropertyName() != null) {
                 fieldPath.append(fieldPath.isEmpty() ? "" : ".").append(reference.getPropertyName());
             } else if (reference.getIndex() >= 0) {
                 fieldPath.append('[').append(reference.getIndex()).append(']');
             }
-        }
+        });
         return fieldPath.isEmpty() ? null : fieldPath.toString();
     }
 

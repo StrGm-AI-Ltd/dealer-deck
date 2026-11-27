@@ -73,7 +73,7 @@ public class DeckRegistry {
         this.mapper = mapper;
         this.chatClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(properties.timeouts().chatConnectSeconds())).build();
         this.chatRequestTimeout = Duration.ofMinutes(properties.timeouts().chatRequestMinutes());
-        for (final var serverConfig : properties.servers()) {
+        properties.servers().forEach(serverConfig -> {
             final var requests = new SimpleClientHttpRequestFactory();
             requests.setConnectTimeout(Duration.ofSeconds(properties.timeouts().deckConnectSeconds()));
             requests.setReadTimeout(Duration.ofSeconds(properties.timeouts().deckReadSeconds()));
@@ -84,7 +84,7 @@ public class DeckRegistry {
             servers.put(serverConfig.name(), new DeckServerRef(serverConfig));
             deckClients.put(serverConfig.name(), new DeckClients(factory.createClient(ModelProfilesApi.class), factory.createClient(LeasesApi.class),
                     credential == null || credential.isBlank() ? null : "Bearer " + credential));
-        }
+        });
         refreshProfiles();
     }
 
@@ -95,7 +95,7 @@ public class DeckRegistry {
     @Scheduled(fixedDelayString = "${dealer.timers.deck-refresh-millis}")
     public void refreshProfiles() {
         final List<ModelProfileRef> next = new ArrayList<>();
-        for (final var serverRef : servers.values()) {
+        servers.values().forEach(serverRef -> {
             try {
                 final var offeredProfiles = requireNonNull(clientsOf(serverRef).modelProfiles().getModelProfiles().getBody(),
                         "no model profiles in the response");
@@ -107,7 +107,7 @@ public class DeckRegistry {
                         .filter(profileRef -> profileRef.serverRef() == serverRef)
                         .forEach(next::add);
             }
-        }
+        });
         profiles = List.copyOf(next);
     }
 
