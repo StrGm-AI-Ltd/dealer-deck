@@ -1,5 +1,6 @@
 package ai.strgm.deck;
 
+import ai.strgm.types.LeaseId;
 import org.jspecify.annotations.Nullable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -43,6 +44,6 @@ public class ChatController {
         if (!Json.bool(request.path("stream"))) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "Streaming only: set \"stream\": true");
         }
-        return ResponseEntity.ok().contentType(MediaType.TEXT_EVENT_STREAM).body(server.chat(leaseId, providerAuthorization, request));
+        return ResponseEntity.ok().contentType(MediaType.TEXT_EVENT_STREAM).body(server.chat(new LeaseId(leaseId), providerAuthorization, request));
     }
 }

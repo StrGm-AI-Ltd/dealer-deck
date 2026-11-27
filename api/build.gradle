@@ -13,6 +13,7 @@ dependencyManagement {
 }
 
 dependencies {
+    api project(':types')
     api 'org.springframework:spring-web'
     api 'org.springframework:spring-context'
     api 'com.fasterxml.jackson.core:jackson-annotations'
@@ -39,6 +40,9 @@ def common = [
         sourceFolder            : 'src/main/java',
 ]
 def generated = []
+// The documents' identifier and name schemas become the microtypes in the types module, in models and interfaces alike
+def microtypes = ['LeaseId', 'ProfileId', 'SessionRef', 'SessionId', 'ModelName', 'ClientName', 'ServerName']
+        .collectEntries { [(it): "ai.strgm.types.$it".toString()] }
 
 ['deck', 'dealer'].each { name ->
     ['server', 'client'].each { kind ->
@@ -54,6 +58,7 @@ def generated = []
             modelPackage.set("ai.strgm.${name}.api.model")
             invokerPackage.set("ai.strgm.${name}.api")
             validateSpec.set(true)
+            schemaMappings.set(microtypes)
             cleanupOutput.set(true)   // a renamed or removed schema must not leave its old class behind in the jar
             if (kind == 'server') {
                 // the servers validate what the documents require (required fields, minimum, maximum)

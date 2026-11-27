@@ -2,6 +2,9 @@ package ai.strgm.deck;
 
 import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseState;
+import ai.strgm.types.LeaseId;
+import ai.strgm.types.ProfileId;
+import ai.strgm.types.SessionRef;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -21,18 +24,18 @@ public abstract class AbstractDeckServer implements DeckServer {
     protected final DeckProperties props;
     protected final ObjectMapper mapper;
     /** Every lease this server has granted, oldest first. */
-    protected final Map<String, LeaseRecord> leases = Collections.synchronizedMap(new LinkedHashMap<>());
+    protected final Map<LeaseId, LeaseRecord> leases = Collections.synchronizedMap(new LinkedHashMap<>());
 
     protected AbstractDeckServer(final DeckProperties props, final ObjectMapper mapper) {
         this.props = props;
         this.mapper = mapper;
     }
 
-    protected static ApiException unknownProfile(final String profileId) {
+    protected static ApiException unknownProfile(final ProfileId profileId) {
         return new ApiException(HttpStatus.NOT_FOUND, "not_found", "Unknown profile: " + profileId);
     }
 
-    protected LeaseRecord record(final String leaseId) {
+    protected LeaseRecord record(final LeaseId leaseId) {
         final var lease = leases.get(leaseId);
         if (lease == null) {
             throw new ApiException(HttpStatus.NOT_FOUND, "not_found", "Unknown lease: " + leaseId);
@@ -41,7 +44,7 @@ public abstract class AbstractDeckServer implements DeckServer {
     }
 
     /** The lease a chat request names, which must still be active. */
-    protected LeaseRecord activeRecord(final String leaseId) {
+    protected LeaseRecord activeRecord(final LeaseId leaseId) {
         final var lease = record(leaseId);
         if (!lease.active()) {
             throw new ApiException(HttpStatus.CONFLICT, "lease_inactive", "Lease " + leaseId + " is " + lease.state.getValue());
@@ -50,7 +53,7 @@ public abstract class AbstractDeckServer implements DeckServer {
     }
 
     /** The ids of the active leases on {@code profileId}. */
-    protected List<String> active(final String profileId) {
+    protected List<LeaseId> active(final ProfileId profileId) {
         synchronized (leases) {
             return leases.values().stream().filter(lease -> lease.active() && lease.profileId.equals(profileId)).map(lease -> lease.id).toList();
         }
@@ -75,15 +78,15 @@ public abstract class AbstractDeckServer implements DeckServer {
      * would ever release (#65).
      */
     @Override
-    public final synchronized Acquisition acquire(final String profileId, final String sessionRef) {
+    public final synchronized Acquisition acquire(final ProfileId profileId, final SessionRef sessionRef) {
         final var held = activeLease(profileId, sessionRef);
         return held != null ? new Acquisition(held.toApi(), false) : new Acquisition(grant(profileId, sessionRef), true);
     }
 
     /** Grants a new lease, or throws if the profile is unknown or has no capacity. Runs under this object's lock. */
-    protected abstract Lease grant(String profileId, String sessionRef);
+    protected abstract Lease grant(ProfileId profileId, SessionRef sessionRef);
 
-    private @Nullable LeaseRecord activeLease(final String profileId, final String sessionRef) {
+    private @Nullable LeaseRecord activeLease(final ProfileId profileId, final SessionRef sessionRef) {
         synchronized (leases) {
             return leases.values().stream()
                     .filter(lease -> lease.active() && lease.profileId.equals(profileId) && lease.sessionRef.equals(sessionRef))
@@ -92,12 +95,12 @@ public abstract class AbstractDeckServer implements DeckServer {
     }
 
     @Override
-    public Lease get(final String leaseId) {
+    public Lease get(final LeaseId leaseId) {
         return record(leaseId).toApi();
     }
 
     @Override
-    public synchronized List<Lease> leases(final @Nullable String profileId, final @Nullable String sessionRef) {
+    public synchronized List<Lease> leases(final @Nullable ProfileId profileId, final @Nullable SessionRef sessionRef) {
         synchronized (leases) {
             return leases.values().stream().filter(LeaseRecord::active)
                     .filter(lease -> profileId == null || lease.profileId.equals(profileId))
@@ -107,7 +110,7 @@ public abstract class AbstractDeckServer implements DeckServer {
     }
 
     @Override
-    public synchronized void release(final String leaseId) {
+    public synchronized void release(final LeaseId leaseId) {
         final var lease = record(leaseId);
         if (lease.active()) {
             lease.state = LeaseState.RELEASED;
@@ -115,7 +118,7 @@ public abstract class AbstractDeckServer implements DeckServer {
     }
 
     @Override
-    public synchronized Lease evict(final String leaseId) {
+    public synchronized Lease evict(final LeaseId leaseId) {
         final var lease = record(leaseId);
         if (lease.active()) {
             lease.state = LeaseState.EVICTED;

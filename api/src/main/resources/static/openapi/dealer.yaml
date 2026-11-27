@@ -27,7 +27,9 @@ paths:
       description: >-
         Streaming only in v0.5. The request waits in DEALER's queue until it can be placed on a DECK
         profile. A session keeps its lease across requests (sticky) until the lease idles out or is
-        evicted by a higher-priority client. The response is a server-sent event stream of
+        evicted by a higher-priority client. A session holds one lease at a time: a request that arrives
+        while another request in the session is queued waits for it, and a request for another model
+        waits until the session's requests in flight end. The response is a server-sent event stream of
         `ChatCompletionChunk` objects ending with `data: [DONE]`.
       parameters:
         - name: X-Session-Id
@@ -35,7 +37,7 @@ paths:
           required: true
           description: The agent session; scoped to the client
           schema:
-            type: string
+            $ref: 'common.yaml#/components/schemas/SessionId'
         - name: X-Request-Priority
           in: header
           required: false
@@ -124,13 +126,23 @@ components:
         `external` servers. Null where no DECK server applies, e.g. on virtual models.
       enum: [local, external]
       example: local
+    SessionLeaseState:
+      type: string
+      description: >-
+        Where a session's lease stands: `none` before its first lease; `loading` and `ready` while it
+        holds one; `evicting` while a higher-priority client waits for its requests in flight to end;
+        `evicted`, `released` (for a model switch) or `released_idle` once it no longer holds one.
+      enum: [none, loading, ready, evicting, evicted, released, released_idle]
+      example: ready
     Model:
       type: object
+      description: >-
+        A model a client can request: a DECK profile, or a virtual `auto-*` model. `deck_server` is the DECK
+        server that serves the profile, and null for virtual models.
       required: [id, object, created, owned_by]
       properties:
         id:
-          type: string
-          example: auto-32k
+          $ref: 'common.yaml#/components/schemas/ModelName'
         object:
           type: string
           example: model
@@ -145,9 +157,7 @@ components:
           type: string
           example: dealer
         deck_server:
-          type: string
-          description: The DECK server that serves this profile; null for virtual models
-          example: stub
+          $ref: 'common.yaml#/components/schemas/ServerName'
         server_type:
           $ref: '#/components/schemas/ServerType'
         context_window:
@@ -170,7 +180,7 @@ components:
       type: object
       properties:
         name:
-          type: string
+          $ref: 'common.yaml#/components/schemas/ClientName'
         priority:
           type: integer
         external_routing:
@@ -179,11 +189,11 @@ components:
       type: object
       properties:
         client:
-          type: string
+          $ref: 'common.yaml#/components/schemas/ClientName'
         session_id:
-          type: string
+          $ref: 'common.yaml#/components/schemas/SessionId'
         model:
-          type: string
+          $ref: 'common.yaml#/components/schemas/ModelName'
         client_priority:
           type: integer
         request_priority:
@@ -196,25 +206,26 @@ components:
           description: A profile being drained for this request, if any
     SessionInfo:
       type: object
+      description: >-
+        A session DEALER tracks. `deck_server`, `profile_id` and `lease_id` describe the session's lease, and are
+        null without one.
       properties:
         client:
-          type: string
+          $ref: 'common.yaml#/components/schemas/ClientName'
         session_id:
-          type: string
+          $ref: 'common.yaml#/components/schemas/SessionId'
         model:
-          type: string
+          $ref: 'common.yaml#/components/schemas/ModelName'
         deck_server:
-          type: string
-          description: The DECK server the session's lease is on; null without a lease
-          example: stub
+          $ref: 'common.yaml#/components/schemas/ServerName'
         server_type:
           $ref: '#/components/schemas/ServerType'
         profile_id:
-          type: string
+          $ref: 'common.yaml#/components/schemas/ProfileId'
         lease_id:
-          type: string
+          $ref: 'common.yaml#/components/schemas/LeaseId'
         lease_state:
-          type: string
+          $ref: '#/components/schemas/SessionLeaseState'
         lease_age_ms:
           type: integer
           format: int64
@@ -241,6 +252,9 @@ components:
           format: double
     EvictionEvent:
       type: object
+      description: >-
+        A lease evicted for a higher-priority client. `deck_server` and `profile_id` say where the victim's lease
+        was.
       properties:
         created_at:
           type: integer
@@ -248,24 +262,22 @@ components:
           description: When DEALER decided the eviction, in Unix seconds
           example: 1795547093
         victim_client:
-          type: string
+          $ref: 'common.yaml#/components/schemas/ClientName'
         victim_session:
-          type: string
+          $ref: 'common.yaml#/components/schemas/SessionId'
         deck_server:
-          type: string
-          description: The DECK server the victim's lease was on
-          example: stub
+          $ref: 'common.yaml#/components/schemas/ServerName'
         profile_id:
-          type: string
+          $ref: 'common.yaml#/components/schemas/ProfileId'
         by_client:
-          type: string
+          $ref: 'common.yaml#/components/schemas/ClientName'
         reason:
           type: string
     ServerInfo:
       type: object
       properties:
         name:
-          type: string
+          $ref: 'common.yaml#/components/schemas/ServerName'
         url:
           type: string
         server_type:

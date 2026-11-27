@@ -3,6 +3,9 @@ package ai.strgm.deck;
 import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.deck.api.model.Usage;
+import ai.strgm.types.LeaseId;
+import ai.strgm.types.ProfileId;
+import ai.strgm.types.SessionRef;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 
@@ -11,9 +14,9 @@ public final class LeaseRecord {
     /** How many of a random UUID's characters a lease id keeps. */
     private static final int ID_LENGTH = 8;
 
-    public final String id = "lease-" + UUID.randomUUID().toString().substring(0, ID_LENGTH);
-    public final String profileId;
-    final String sessionRef;
+    public final LeaseId id = new LeaseId("lease-" + UUID.randomUUID().toString().substring(0, ID_LENGTH));
+    public final ProfileId profileId;
+    final SessionRef sessionRef;
     final long createdAt = System.currentTimeMillis();
     public volatile LeaseState state;
     public volatile @Nullable Long readyAt;
@@ -22,7 +25,7 @@ public final class LeaseRecord {
     public long completionTokens;
     boolean estimated;
 
-    public LeaseRecord(final String profileId, final String sessionRef, final LeaseState state) {
+    public LeaseRecord(final ProfileId profileId, final SessionRef sessionRef, final LeaseState state) {
         this.profileId = profileId;
         this.sessionRef = sessionRef;
         this.state = state;

@@ -1,6 +1,8 @@
 package ai.strgm.dealer;
 
 import ai.strgm.dealer.DealerProperties.ClientDef;
+import ai.strgm.types.ModelName;
+import ai.strgm.types.SessionId;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.BufferedReader;
 import java.io.InputStream;
@@ -37,10 +39,6 @@ public class ChatController {
     /** How long one completion may take, streaming included. */
     private static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(5);
     private static final int MAX_SESSION_ID_LENGTH = 200;
-    /** {@code X-Request-Priority}'s range and default, as {@code dealer.yaml} documents them. */
-    private static final int MIN_PRIORITY = 1;
-    private static final int MAX_PRIORITY = 100;
-    private static final int DEFAULT_PRIORITY = 50;
     /** The prefix of a server-sent event's data line. */
     private static final String SSE_DATA_PREFIX = "data:";
 
@@ -72,30 +70,32 @@ public class ChatController {
         if (sessionId == null || sessionId.isBlank() || sessionId.length() > MAX_SESSION_ID_LENGTH) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "Missing or invalid required header X-Session-Id");
         }
-        if (requestPriority != null && (requestPriority < MIN_PRIORITY || requestPriority > MAX_PRIORITY)) {
+        if (requestPriority != null && !Priorities.RANGE.contains(requestPriority)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error",
-                    "X-Request-Priority must be between " + MIN_PRIORITY + " and " + MAX_PRIORITY, "X-Request-Priority");
+                    "X-Request-Priority must be between " + Priorities.MIN + " and " + Priorities.MAX, "X-Request-Priority");
         }
-        final var model = body.path("model").isString() ? body.path("model").asString() : "";
-        if (model.isBlank()) {
+        final var requestedModel = body.path("model").isString() ? body.path("model").asString() : "";
+        if (requestedModel.isBlank()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "Missing \"model\"");
         }
+        final var model = new ModelName(requestedModel);
+        // TODO(#62): say which DECK servers and model profiles the client may use, instead of its external-routing flag
         if (scheduler.candidates(client, model).isEmpty()) {
             throw new ApiException(HttpStatus.NOT_FOUND, "model_not_found",
                     "No DECK profile serves \"" + model + "\" for client " + client.name()
                             + (client.externalRouting() ? "" : " (external routing is off for this client)"));
         }
-        final var priority = requestPriority == null ? DEFAULT_PRIORITY : requestPriority;
-        final var placement = scheduler.acquire(client, sessionId, model, priority);
+        final var priority = requestPriority == null ? Priorities.DEFAULT_REQUEST : requestPriority;
+        final var placement = scheduler.acquire(client, new SessionId(sessionId), model, priority);
         final var server = placement.profile().server();
         final var forward = (ObjectNode) body.deepCopy();
-        forward.put("model", placement.profile().profile().getModel());
+        forward.put("model", placement.profile().profile().getModel().value());
         final var clientWantsUsage = body.path("stream_options").path("include_usage").isBoolean()
                 && body.path("stream_options").path("include_usage").booleanValue();
         forward.putObject("stream_options").put("include_usage", true);
         final var request = HttpRequest.newBuilder(URI.create(server.def().url() + "/v1/chat/completions"))
                 .header("Authorization", "Bearer " + server.def().key())
-                .header("X-Lease-Id", placement.leaseId())
+                .header("X-Lease-Id", placement.leaseId().value())
                 .header("Content-Type", "application/json")
                 .timeout(REQUEST_TIMEOUT)
                 .POST(HttpRequest.BodyPublishers.ofString(forward.toString()));
@@ -163,8 +163,8 @@ public class ChatController {
             }
         };
         return ResponseEntity.ok().contentType(MediaType.TEXT_EVENT_STREAM)
-                .header("X-Dealer-Server", server.name())
-                .header("X-Dealer-Profile", placement.profile().profile().getId())
+                .header("X-Dealer-Server", server.name().value())
+                .header("X-Dealer-Profile", placement.profile().profile().getId().value())
                 .body(stream);
     }
 

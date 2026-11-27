@@ -15,6 +15,10 @@ import ai.strgm.deck.api.model.ModelProfiles;
 import ai.strgm.deck.api.model.Prices;
 import ai.strgm.deck.api.model.Quantization;
 import ai.strgm.deck.api.model.Readiness;
+import ai.strgm.types.LeaseId;
+import ai.strgm.types.ModelName;
+import ai.strgm.types.ProfileId;
+import ai.strgm.types.SessionRef;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.URI;
@@ -62,18 +66,23 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
         this.prefix = upstream.idPrefix() == null ? upstream.provider() + "/" : upstream.idPrefix();
     }
 
-    private UpstreamProperties.Model model(final String profileId) {
-        return upstream.models().stream().filter(upstreamModel -> (prefix + upstreamModel.model()).equals(profileId)).findFirst()
+    private UpstreamProperties.Model model(final ProfileId profileId) {
+        return upstream.models().stream().filter(upstreamModel -> profileId(upstreamModel).equals(profileId)).findFirst()
                 .orElseThrow(() -> unknownProfile(profileId));
+    }
+
+    /** A model's profile id, which is also the model name DEALER's clients request: the provider's name, prefixed. */
+    private ProfileId profileId(final UpstreamProperties.Model upstreamModel) {
+        return new ProfileId(prefix + upstreamModel.model());
     }
 
     private List<ModelProfile> profiles() {
         return upstream.models().stream()
-                .map(upstreamModel -> new ModelProfile(prefix + upstreamModel.model(), prefix + upstreamModel.model(),
+                .map(upstreamModel -> new ModelProfile(profileId(upstreamModel), new ModelName(prefix + upstreamModel.model()),
                         upstreamModel.contextWindow(), Readiness.LOADED).provider(upstream.provider()).limitations(new Limitations())
                         .quantization(upstreamModel.quantization() == null ? null
                                 : new Quantization(upstreamModel.quantization()).bitsPerWeight(upstreamModel.bitsPerWeight()))
-                        .maxLeases(upstreamModel.maxLeases()).activeLeases(active(prefix + upstreamModel.model()).size())
+                        .maxLeases(upstreamModel.maxLeases()).activeLeases(active(profileId(upstreamModel)).size())
                         .prices(new Prices().inputPerMTok(upstreamModel.inputPerMTok())
                                 .cachedInputPerMTok(upstreamModel.cachedInputPerMTok()).outputPerMTok(upstreamModel.outputPerMTok())))
                 .toList();
@@ -85,7 +94,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
     }
 
     @Override
-    protected Lease grant(final String profileId, final String sessionRef) {
+    protected Lease grant(final ProfileId profileId, final SessionRef sessionRef) {
         final var upstreamModel = model(profileId);
         final var active = active(profileId);
         if (upstreamModel.maxLeases() != null && active.size() >= upstreamModel.maxLeases()) {
@@ -97,6 +106,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
         return lease.toApi();
     }
 
+    // TODO(#104): a money amount with its currency, instead of a bare double
     private double cost(final LeaseRecord lease) {
         final var upstreamModel = model(lease.profileId);
         synchronized (lease) {
@@ -115,7 +125,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
     }
 
     @Override
-    public StreamingResponseBody chat(final String leaseId, final @Nullable String providerAuthorization, final JsonNode request) {
+    public StreamingResponseBody chat(final LeaseId leaseId, final @Nullable String providerAuthorization, final JsonNode request) {
         if (providerAuthorization == null || providerAuthorization.isBlank()) {
             throw new ApiException(HttpStatus.UNAUTHORIZED, "authentication_error",
                     "Missing X-Provider-Authorization: this DECK server forwards the provider credential it receives (D104)");
@@ -123,7 +133,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
         final var lease = activeRecord(leaseId);
         final var upstreamModel = model(lease.profileId);
         final var body = (ObjectNode) request.deepCopy();
-        body.put("model", upstreamModel.model());
+        body.put("model", upstreamModel.model().value());
         body.put("stream", true);
         body.putObject("stream_options").put("include_usage", true);
         final var base = upstream.baseUrl().endsWith("/") ? upstream.baseUrl() : upstream.baseUrl() + "/";

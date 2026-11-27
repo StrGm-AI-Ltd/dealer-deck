@@ -8,6 +8,9 @@ import ai.strgm.deck.api.model.ModelProfiles;
 import ai.strgm.deck.api.server.LeasesApi;
 import ai.strgm.deck.api.server.MetricsApi;
 import ai.strgm.deck.api.server.ModelProfilesApi;
+import ai.strgm.types.LeaseId;
+import ai.strgm.types.ProfileId;
+import ai.strgm.types.SessionRef;
 import java.net.URI;
 import org.jspecify.annotations.Nullable;
 import org.springframework.http.ResponseEntity;
@@ -35,23 +38,23 @@ public class DeckApiController implements ModelProfilesApi, LeasesApi, MetricsAp
     }
 
     @Override
-    public ResponseEntity<Leases> listLeases(final @Nullable String profileId, final @Nullable String sessionRef) {
+    public ResponseEntity<Leases> listLeases(final @Nullable ProfileId profileId, final @Nullable SessionRef sessionRef) {
         return ResponseEntity.ok(new Leases(server.leases(profileId, sessionRef)));
     }
 
     @Override
-    public ResponseEntity<Lease> getLease(final String leaseId) {
+    public ResponseEntity<Lease> getLease(final LeaseId leaseId) {
         return ResponseEntity.ok(server.get(leaseId));
     }
 
     @Override
-    public ResponseEntity<Void> releaseLease(final String leaseId) {
+    public ResponseEntity<Void> releaseLease(final LeaseId leaseId) {
         server.release(leaseId);
         return ResponseEntity.noContent().build();
     }
 
     @Override
-    public ResponseEntity<Lease> evictLease(final String leaseId) {
+    public ResponseEntity<Lease> evictLease(final LeaseId leaseId) {
         return ResponseEntity.ok(server.evict(leaseId));
     }
 
