@@ -6,8 +6,9 @@ import static java.util.Objects.requireNonNull;
 
 import ai.strgm.dealer.config.DealerProperties.ClientConfig;
 import ai.strgm.dealer.api.model.SessionLeaseState;
-import ai.strgm.dealer.model.DeckProfile.TokenPrices;
 import ai.strgm.deck.api.model.LeaseState;
+import ai.strgm.deck.client.model.DeckLease;
+import ai.strgm.deck.client.model.DeckProfile.TokenPrices;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.SessionId;

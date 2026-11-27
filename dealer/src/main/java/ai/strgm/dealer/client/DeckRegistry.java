@@ -7,14 +7,8 @@ import ai.strgm.dealer.config.DealerProperties;
 import ai.strgm.dealer.exception.DeckErrorException;
 import ai.strgm.dealer.exception.DeckUnreachableException;
 import ai.strgm.dealer.exception.LeaseBlockedException;
-import ai.strgm.dealer.model.DeckLease;
-import ai.strgm.dealer.model.DeckProfile;
-import ai.strgm.dealer.model.DeckProfile.TokenPrices;
 import ai.strgm.dealer.model.DeckServerRef;
 import ai.strgm.dealer.model.ModelProfileRef;
-import ai.strgm.deck.api.model.Lease;
-import ai.strgm.deck.api.model.LeaseReduction;
-import ai.strgm.deck.api.model.ModelProfile;
 import ai.strgm.deck.client.DeckChatStream;
 import ai.strgm.deck.client.DeckClient;
 import ai.strgm.deck.client.config.DeckEndpoint;
@@ -22,27 +16,27 @@ import ai.strgm.deck.client.config.DeckTimeouts;
 import ai.strgm.deck.client.exception.DeckConnectionException;
 import ai.strgm.deck.client.exception.DeckLeaseConflictException;
 import ai.strgm.deck.client.exception.DeckResponseException;
+import ai.strgm.deck.client.model.DeckLease;
+import ai.strgm.deck.client.model.DeckProfile;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.ServerName;
 import ai.strgm.types.SessionRef;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import org.jspecify.annotations.Nullable;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * The configured DECK servers, each called through its own {@link DeckClient}. DECK's models and the client's
- * exceptions stay here: the rest of DEALER sees {@link DeckProfile}s, {@link DeckLease}s and DEALER's own exceptions.
+ * The configured DECK servers, each called through its own {@link DeckClient}, which returns {@link DeckProfile}s and
+ * {@link DeckLease}s. The client's exceptions stay here: the rest of DEALER sees DEALER's own.
  */
 @Component
 public class DeckRegistry {
@@ -73,7 +67,7 @@ public class DeckRegistry {
         final List<ModelProfileRef> next = new ArrayList<>();
         servers.values().forEach(serverRef -> {
             try {
-                clientOf(serverRef).modelProfiles().getProfiles().forEach(profile -> next.add(new ModelProfileRef(serverRef, deckProfile(profile))));
+                clientOf(serverRef).modelProfiles().forEach(profile -> next.add(new ModelProfileRef(serverRef, profile)));
                 reachable.put(serverRef.name(), true);
             } catch (Exception exception) {
                 reachable.put(serverRef.name(), false);
@@ -83,26 +77,6 @@ public class DeckRegistry {
             }
         });
         profiles = List.copyOf(next);
-    }
-
-    private static DeckProfile deckProfile(final ModelProfile profile) {
-        final var prices = profile.getPrices();
-        final var limitations = profile.getLimitations();
-        final var leaseReductions = limitations == null || limitations.getLeaseReductions() == null ? List.<LeaseReduction>of()
-                : limitations.getLeaseReductions();
-        return new DeckProfile(profile.getId(), profile.getModel(), profile.getContextWindow(), prices == null ? TokenPrices.NONE
-                : new TokenPrices(orZero(prices.getInputPerMTok()), orZero(prices.getCachedInputPerMTok()), orZero(prices.getOutputPerMTok())),
-                leaseReductions.stream()
-                        .map(LeaseReduction::getProfileId)
-                        .toList());
-    }
-
-    private static double orZero(final @Nullable Double price) {
-        return price == null ? 0 : price;
-    }
-
-    private static DeckLease deckLease(final Lease lease) {
-        return new DeckLease(lease.getId(), lease.getState(), mapNullable(lease.getReadyAtMs(), Instant::ofEpochMilli));
     }
 
     public List<ModelProfileRef> profiles() {
@@ -119,14 +93,14 @@ public class DeckRegistry {
 
     public DeckLease acquireLease(final ModelProfileRef profileRef, final SessionRef sessionRef) throws LeaseBlockedException {
         try {
-            return deckLease(clientOf(profileRef.serverRef()).acquireLease(profileRef.profile().id(), sessionRef));
+            return clientOf(profileRef.serverRef()).acquireLease(profileRef.profile().id(), sessionRef);
         } catch (DeckLeaseConflictException exception) {
             throw new LeaseBlockedException(exception.blockers());
         }
     }
 
     public DeckLease lease(final DeckServerRef serverRef, final LeaseId leaseId) {
-        return deckLease(clientOf(serverRef).lease(leaseId));
+        return clientOf(serverRef).lease(leaseId);
     }
 
     public void releaseLease(final DeckServerRef serverRef, final LeaseId leaseId) {

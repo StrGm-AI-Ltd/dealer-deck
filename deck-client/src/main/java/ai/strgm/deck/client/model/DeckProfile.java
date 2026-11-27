@@ -1,12 +1,12 @@
-package ai.strgm.dealer.model;
+package ai.strgm.deck.client.model;
 
 import ai.strgm.types.ModelName;
 import ai.strgm.types.ProfileId;
 import java.util.List;
 
 /**
- * A model profile a DECK server offers, as DEALER routes and prices by it. {@code reducedProfileIds}: the profiles on
- * the same server whose leases a lease on this one reduces.
+ * A model profile a DECK server offers, as a client routes and prices by it. {@code reducedProfileIds}: the profiles
+ * on the same server whose leases a lease on this one reduces.
  */
 public record DeckProfile(ProfileId id, ModelName modelName, int contextWindow, TokenPrices prices, List<ProfileId> reducedProfileIds) {
 

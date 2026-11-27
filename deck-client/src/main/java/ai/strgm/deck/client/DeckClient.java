@@ -10,19 +10,25 @@ import ai.strgm.deck.api.client.ModelProfilesApi;
 import ai.strgm.deck.api.model.DeckState;
 import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseConflict;
+import ai.strgm.deck.api.model.LeaseReduction;
 import ai.strgm.deck.api.model.LeaseRequest;
-import ai.strgm.deck.api.model.ModelProfiles;
+import ai.strgm.deck.api.model.ModelProfile;
 import ai.strgm.deck.client.config.DeckEndpoint;
 import ai.strgm.deck.client.config.DeckTimeouts;
 import ai.strgm.deck.client.exception.DeckConnectionException;
 import ai.strgm.deck.client.exception.DeckLeaseConflictException;
 import ai.strgm.deck.client.exception.DeckResponseException;
+import ai.strgm.deck.client.model.DeckLease;
+import ai.strgm.deck.client.model.DeckProfile;
+import ai.strgm.deck.client.model.DeckProfile.TokenPrices;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.ProfileId;
 import ai.strgm.types.SessionRef;
 import ai.strgm.util.AuthorizationHeaders;
 import java.net.http.HttpClient;
+import java.time.Instant;
+import java.util.List;
 import java.util.function.Supplier;
 import org.jspecify.annotations.Nullable;
 import org.springframework.http.client.ClientHttpRequestFactory;
@@ -38,10 +44,12 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * A client of one DECK server, with the DECK API's features as Java methods. It hides the HTTP underneath:
+ * A client of one DECK server, with the DECK API's features as Java methods that take and return domain types, never
+ * the models generated from the DECK OpenAPI document. It hides the HTTP underneath:
  * <ul>
  * <li>the DECK key, and the provider credential it forwards with each chat completion;</li>
- * <li>the request and response bodies, built on the HTTP interfaces generated from the DECK OpenAPI document;</li>
+ * <li>the request and response bodies, built on the HTTP interfaces generated from the DECK OpenAPI document, and the
+ * mapping between the generated models and the domain types;</li>
  * <li>error statuses, which become {@link DeckResponseException}s, and connection failures, which become
  * {@link DeckConnectionException}s;</li>
  * <li>a chat completion's server-sent events, which a {@link DeckChatStream} reads.</li>
@@ -80,14 +88,37 @@ public final class DeckClient {
     }
 
     /** The model profiles the server offers. */
-    public ModelProfiles modelProfiles() {
-        return call(() -> requireNonNull(modelProfilesApi.getModelProfiles().getBody(), "no model profiles in the response"));
+    public List<DeckProfile> modelProfiles() {
+        final var offeredProfiles = call(() -> requireNonNull(modelProfilesApi.getModelProfiles().getBody(), "no model profiles in the response"));
+        return offeredProfiles.getProfiles().stream()
+                .map(DeckClient::deckProfile)
+                .toList();
+    }
+
+    private static DeckProfile deckProfile(final ModelProfile profile) {
+        final var prices = profile.getPrices();
+        final var limitations = profile.getLimitations();
+        final var leaseReductions = limitations == null || limitations.getLeaseReductions() == null ? List.<LeaseReduction>of()
+                : limitations.getLeaseReductions();
+        return new DeckProfile(profile.getId(), profile.getModel(), profile.getContextWindow(), prices == null ? TokenPrices.NONE
+                : new TokenPrices(orZero(prices.getInputPerMTok()), orZero(prices.getCachedInputPerMTok()), orZero(prices.getOutputPerMTok())),
+                leaseReductions.stream()
+                        .map(LeaseReduction::getProfileId)
+                        .toList());
+    }
+
+    private static double orZero(final @Nullable Double price) {
+        return price == null ? 0 : price;
+    }
+
+    private static DeckLease deckLease(final Lease lease) {
+        return new DeckLease(lease.getId(), lease.getState(), mapNullable(lease.getReadyAtMs(), Instant::ofEpochMilli));
     }
 
     /** Acquires a lease on {@code profileId} for {@code sessionRef}. Throws {@link DeckLeaseConflictException} when active leases are in the way. */
-    public Lease acquireLease(final ProfileId profileId, final SessionRef sessionRef) {
+    public DeckLease acquireLease(final ProfileId profileId, final SessionRef sessionRef) {
         try {
-            return call(() -> requireNonNull(leasesApi.acquireLease(new LeaseRequest(profileId, sessionRef)).getBody(), "no lease in the response"));
+            return deckLease(call(() -> requireNonNull(leasesApi.acquireLease(new LeaseRequest(profileId, sessionRef)).getBody(), "no lease in the response")));
         } catch (DeckResponseException exception) {
             if (exception.status() == CONFLICT.value()) {
                 throw new DeckLeaseConflictException(exception.status(), exception.body(),
@@ -97,8 +128,8 @@ public final class DeckClient {
         }
     }
 
-    public Lease lease(final LeaseId leaseId) {
-        return call(() -> requireNonNull(leasesApi.getLease(leaseId).getBody(), "no lease in the response"));
+    public DeckLease lease(final LeaseId leaseId) {
+        return deckLease(call(() -> requireNonNull(leasesApi.getLease(leaseId).getBody(), "no lease in the response")));
     }
 
     public void releaseLease(final LeaseId leaseId) {
