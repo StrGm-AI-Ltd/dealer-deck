@@ -1,5 +1,6 @@
-package ai.strgm.dealer.ui;
+package ai.strgm.dealer.ui.client;
 
+import ai.strgm.dealer.ui.config.UiProperties;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -12,12 +13,22 @@ import org.springframework.web.service.invoker.HttpServiceProxyFactory;
 /** The generated HTTP-interface clients for DEALER's and each DECK server's metrics API. */
 @Component
 public class Clients {
-    final ai.strgm.dealer.api.client.MetricsApi dealer;
-    final Map<String, ai.strgm.deck.api.client.MetricsApi> decks = new LinkedHashMap<>();
+    private final ai.strgm.dealer.api.client.MetricsApi dealer;
+    private final Map<String, ai.strgm.deck.api.client.MetricsApi> decks = new LinkedHashMap<>();
 
     public Clients(final UiProperties properties) {
         dealer = factory(properties.dealer(), properties).createClient(ai.strgm.dealer.api.client.MetricsApi.class);
         properties.decks().forEach(deck -> decks.put(deck.name(), factory(deck, properties).createClient(ai.strgm.deck.api.client.MetricsApi.class)));
+    }
+
+    /** DEALER's metrics API. */
+    public ai.strgm.dealer.api.client.MetricsApi dealer() {
+        return dealer;
+    }
+
+    /** Each DECK server's metrics API, by the server's name in the configuration. */
+    public Map<String, ai.strgm.deck.api.client.MetricsApi> decks() {
+        return decks;
     }
 
     private static HttpServiceProxyFactory factory(final UiProperties.Endpoint endpoint, final UiProperties properties) {

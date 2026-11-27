@@ -1,4 +1,4 @@
-package ai.strgm.dealer.ui;
+package ai.strgm.dealer.ui.config;
 
 import java.util.List;
 import org.springframework.boot.context.properties.ConfigurationProperties;

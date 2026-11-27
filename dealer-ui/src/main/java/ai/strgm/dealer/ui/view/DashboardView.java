@@ -1,4 +1,4 @@
-package ai.strgm.dealer.ui;
+package ai.strgm.dealer.ui.view;
 
 import static ai.strgm.util.Nulls.mapNullable;
 import static java.util.stream.Collectors.joining;
@@ -7,6 +7,8 @@ import ai.strgm.dealer.api.model.ClientInfo;
 import ai.strgm.dealer.api.model.EvictionEvent;
 import ai.strgm.dealer.api.model.QueuedRequest;
 import ai.strgm.dealer.api.model.SessionInfo;
+import ai.strgm.dealer.ui.client.Clients;
+import ai.strgm.dealer.ui.config.UiProperties;
 import ai.strgm.deck.api.model.Limitations;
 import ai.strgm.deck.api.model.ModelProfile;
 import ai.strgm.deck.api.model.Readiness;
@@ -94,7 +96,7 @@ public class DashboardView extends VerticalLayout {
         add(new H3("Sessions and leases"), sessions, new H3("Queue"), queue, new H3("Evictions"), evictions);
         final var decks = new HorizontalLayout();
         decks.setWidthFull();
-        clients.decks.keySet().forEach(deckName -> {
+        clients.decks().keySet().forEach(deckName -> {
             final var profiles = new Grid<ModelProfile>();
             profiles.addColumn(ModelProfile::getId).setHeader("Profile").setAutoWidth(true);
             profiles.addColumn(profile -> profile.getReadiness().getValue() + (profile.getReadiness() != Readiness.UNLOADED || profile.getLoadingTimeMs() == null
@@ -145,12 +147,12 @@ public class DashboardView extends VerticalLayout {
         ai.strgm.dealer.api.model.DealerState dealer = null;
         String error = null;
         try {
-            dealer = clients.dealer.getDealerState().getBody();
+            dealer = clients.dealer().getDealerState().getBody();
         } catch (Exception exception) {
             error = exception.getMessage();
         }
         final Map<String, ai.strgm.deck.api.model.DeckState> decks = new LinkedHashMap<>();
-        clients.decks.forEach((deckName, api) -> {
+        clients.decks().forEach((deckName, api) -> {
             try {
                 decks.put(deckName, api.getDeckState().getBody());
             } catch (Exception exception) {
