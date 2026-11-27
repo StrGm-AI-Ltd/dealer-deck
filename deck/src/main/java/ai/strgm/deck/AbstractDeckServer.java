@@ -31,6 +31,7 @@ public abstract class AbstractDeckServer implements DeckServer {
      */
     protected final Object lock = new Object();
     /** Every lease this server has granted, oldest first. */
+    // TODO(#103): keep the leases in a persistent store, so a DECK restart doesn't lose them
     private final Map<LeaseId, LeaseRecord> leases = new LinkedHashMap<>();
 
     protected AbstractDeckServer(final DeckProperties properties, final ObjectMapper mapper) {

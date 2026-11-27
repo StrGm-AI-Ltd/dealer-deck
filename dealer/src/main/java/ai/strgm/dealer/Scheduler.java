@@ -69,6 +69,8 @@ public class Scheduler {
     private final DeckRegistry decks;
     private final DealerProperties properties;
     private final Object lock = new Object();
+    // TODO(#109): keep the sessions, lease requests, reservations and evictions in a persistent store, so a DEALER
+    // restart neither loses them nor orphans the sessions' DECK leases
     private final Map<SessionRef, Session> sessions = new LinkedHashMap<>();
     private final List<LeaseRequest> leaseRequests = new ArrayList<>();
     private final Map<String, LeaseRequest> reservations = new HashMap<>();
