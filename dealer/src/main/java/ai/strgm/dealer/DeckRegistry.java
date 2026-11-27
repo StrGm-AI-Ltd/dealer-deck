@@ -46,13 +46,13 @@ public class DeckRegistry {
         }
     }
 
-    public record ModelProfileRef(DeckServerRef server, ModelProfile profile) {
+    public record ModelProfileRef(DeckServerRef serverRef, ModelProfile profile) {
         public String key() {
-            return server.name() + "/" + profile.getId();
+            return serverRef.name() + "/" + profile.getId();
         }
 
         public boolean external() {
-            return server.external();
+            return serverRef.external();
         }
     }
 
@@ -90,15 +90,15 @@ public class DeckRegistry {
     @Scheduled(fixedDelayString = "${dealer.timers.deck-refresh-millis}")
     public void refresh() {
         final List<ModelProfileRef> next = new ArrayList<>();
-        for (final var server : servers.values()) {
+        for (final var serverRef : servers.values()) {
             try {
-                final var offered = requireNonNull(server.modelProfiles().getModelProfiles().getBody(), "no model profiles in the response");
-                offered.getProfiles().forEach(profile -> next.add(new ModelProfileRef(server, profile)));
-                reachable.put(server.name(), true);
+                final var offered = requireNonNull(serverRef.modelProfiles().getModelProfiles().getBody(), "no model profiles in the response");
+                offered.getProfiles().forEach(profile -> next.add(new ModelProfileRef(serverRef, profile)));
+                reachable.put(serverRef.name(), true);
             } catch (Exception exception) {
-                reachable.put(server.name(), false);
+                reachable.put(serverRef.name(), false);
                 profiles.stream()
-                        .filter(profileRef -> profileRef.server() == server)
+                        .filter(profileRef -> profileRef.serverRef() == serverRef)
                         .forEach(next::add);
             }
         }
@@ -113,13 +113,13 @@ public class DeckRegistry {
         return servers;
     }
 
-    public boolean reachable(final ServerName server) {
-        return reachable.getOrDefault(server, false);
+    public boolean reachable(final ServerName serverName) {
+        return reachable.getOrDefault(serverName, false);
     }
 
     public Lease acquire(final ModelProfileRef profileRef, final SessionRef sessionRef) throws Blocked {
         try {
-            return requireNonNull(profileRef.server().leases().acquireLease(new LeaseRequest(profileRef.profile().getId(), sessionRef)).getBody(),
+            return requireNonNull(profileRef.serverRef().leases().acquireLease(new LeaseRequest(profileRef.profile().getId(), sessionRef)).getBody(),
                     "no lease in the response");
         } catch (HttpClientErrorException exception) {
             if (exception.getStatusCode().isSameCodeAs(CONFLICT)) {
@@ -129,21 +129,21 @@ public class DeckRegistry {
         }
     }
 
-    public Lease lease(final DeckServerRef server, final LeaseId leaseId) {
-        return requireNonNull(server.leases().getLease(leaseId).getBody(), "no lease in the response");
+    public Lease lease(final DeckServerRef serverRef, final LeaseId leaseId) {
+        return requireNonNull(serverRef.leases().getLease(leaseId).getBody(), "no lease in the response");
     }
 
-    public void release(final DeckServerRef server, final LeaseId leaseId) {
+    public void release(final DeckServerRef serverRef, final LeaseId leaseId) {
         try {
-            server.leases().releaseLease(leaseId);
+            serverRef.leases().releaseLease(leaseId);
         } catch (Exception ignored) {
             // the lease may already be gone
         }
     }
 
-    public void evict(final DeckServerRef server, final LeaseId leaseId) {
+    public void evict(final DeckServerRef serverRef, final LeaseId leaseId) {
         try {
-            server.leases().evictLease(leaseId);
+            serverRef.leases().evictLease(leaseId);
         } catch (Exception ignored) {
             // the lease may already be gone
         }

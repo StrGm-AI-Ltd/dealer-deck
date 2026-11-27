@@ -12,8 +12,8 @@ public record SessionRef(String value) implements MicroType<String> {
     }
 
     /** The reference DEALER sends for a client's session. */
-    public static SessionRef of(final ClientName client, final SessionId session) {
-        return new SessionRef(client.value() + "/" + session.value());
+    public static SessionRef of(final ClientName clientName, final SessionId sessionId) {
+        return new SessionRef(clientName.value() + "/" + sessionId.value());
     }
 
     @Override

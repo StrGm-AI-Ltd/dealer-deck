@@ -13,10 +13,10 @@ import java.util.concurrent.CompletableFuture;
  * @param arrivalOrder orders lease requests of equal priority by arrival
  * @param placement completed when dispatch places the request, or exceptionally when it's cancelled
  */
-record LeaseRequest(Session session, ModelName model, int requestPriority, long enqueuedAt, long arrivalOrder,
+record LeaseRequest(Session session, ModelName modelName, int requestPriority, long enqueuedAt, long arrivalOrder,
         CompletableFuture<Placement> placement) {
 
-    LeaseRequest(final Session session, final ModelName model, final int requestPriority, final long arrivalOrder) {
-        this(session, model, requestPriority, currentTimeMillis(), arrivalOrder, new CompletableFuture<>());
+    LeaseRequest(final Session session, final ModelName modelName, final int requestPriority, final long arrivalOrder) {
+        this(session, modelName, requestPriority, currentTimeMillis(), arrivalOrder, new CompletableFuture<>());
     }
 }

@@ -147,8 +147,8 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
             throw new ApiException(UNAUTHORIZED, "authentication_error",
                     "Missing X-Provider-Authorization: this DECK server forwards the provider credential it receives (D104)");
         }
-        final var lease = activeRecord(leaseId);
-        final var upstreamModel = model(lease.profileId());
+        final var leaseRecord = activeRecord(leaseId);
+        final var upstreamModel = model(leaseRecord.profileId());
         final var body = (ObjectNode) request.deepCopy();
         body.put("model", upstreamModel.model().value());
         body.put("stream", true);
@@ -203,7 +203,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
                             final var usage = chunk.path("usage");
                             if (usage.isObject()) {
                                 sawUsage = true;
-                                addUsage(lease, Json.number(usage.path("prompt_tokens")),
+                                addUsage(leaseRecord, Json.number(usage.path("prompt_tokens")),
                                         Json.number(usage.path("prompt_tokens_details").path("cached_tokens")),
                                         Json.number(usage.path("completion_tokens")), false);
                             }
@@ -220,7 +220,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
                 }
             } finally {
                 if (!sawUsage) {
-                    addUsage(lease, prompt, 0, max(1, chars / Json.CHARS_PER_TOKEN), true);
+                    addUsage(leaseRecord, prompt, 0, max(1, chars / Json.CHARS_PER_TOKEN), true);
                 }
                 out.flush();
             }

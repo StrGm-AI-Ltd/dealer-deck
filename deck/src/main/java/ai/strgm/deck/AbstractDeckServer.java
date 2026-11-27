@@ -42,21 +42,21 @@ public abstract class AbstractDeckServer implements DeckServer {
     }
 
     private LeaseRecord record(final LeaseId leaseId) {
-        final var lease = leases.get(leaseId);
-        if (lease == null) {
+        final var leaseRecord = leases.get(leaseId);
+        if (leaseRecord == null) {
             throw new ApiException(NOT_FOUND, "not_found", "Unknown lease: " + leaseId);
         }
-        return lease;
+        return leaseRecord;
     }
 
     /** The lease a chat request names, which must still be active. */
     protected LeaseRecord activeRecord(final LeaseId leaseId) {
         synchronized (lock) {
-            final var lease = record(leaseId);
-            if (!lease.active()) {
-                throw new ApiException(CONFLICT, "lease_inactive", "Lease " + leaseId + " is " + lease.state().getValue());
+            final var leaseRecord = record(leaseId);
+            if (!leaseRecord.active()) {
+                throw new ApiException(CONFLICT, "lease_inactive", "Lease " + leaseId + " is " + leaseRecord.state().getValue());
             }
-            return lease;
+            return leaseRecord;
         }
     }
 
@@ -73,7 +73,7 @@ public abstract class AbstractDeckServer implements DeckServer {
     protected List<LeaseId> active(final ProfileId profileId) {
         synchronized (lock) {
             return leases.values().stream()
-                    .filter(lease -> lease.active() && lease.profileId().equals(profileId))
+                    .filter(leaseRecord -> leaseRecord.active() && leaseRecord.profileId().equals(profileId))
                     .map(LeaseRecord::id)
                     .toList();
         }
@@ -82,29 +82,29 @@ public abstract class AbstractDeckServer implements DeckServer {
     /** Stores a new lease. For {@link #grant}, which runs under the lock. */
     protected LeaseRecord register(final ProfileId profileId, final SessionRef sessionRef, final LeaseState state) {
         synchronized (lock) {
-            final var lease = new LeaseRecord(profileId, sessionRef, state);
-            leases.put(lease.id(), lease);
-            return lease;
+            final var leaseRecord = new LeaseRecord(profileId, sessionRef, state);
+            leases.put(leaseRecord.id(), leaseRecord);
+            return leaseRecord;
         }
     }
 
     /** A loading lease becomes ready, e.g. once a simulated load finishes. */
-    protected void markReady(final LeaseRecord lease) {
+    protected void markReady(final LeaseRecord leaseRecord) {
         synchronized (lock) {
-            lease.markReady();
+            leaseRecord.markReady();
         }
     }
 
-    protected boolean isLoading(final LeaseRecord lease) {
+    protected boolean isLoading(final LeaseRecord leaseRecord) {
         synchronized (lock) {
-            return lease.state() == LeaseState.LOADING;
+            return leaseRecord.state() == LeaseState.LOADING;
         }
     }
 
     /** Adds a completion's tokens to its lease; {@code estimated} when the provider sent no usage. */
-    protected void addUsage(final LeaseRecord lease, final long prompt, final long cached, final long completion, final boolean estimated) {
+    protected void addUsage(final LeaseRecord leaseRecord, final long prompt, final long cached, final long completion, final boolean estimated) {
         synchronized (lock) {
-            lease.addUsage(prompt, cached, completion, estimated);
+            leaseRecord.addUsage(prompt, cached, completion, estimated);
         }
     }
 
@@ -132,7 +132,8 @@ public abstract class AbstractDeckServer implements DeckServer {
     public final Acquisition acquire(final ProfileId profileId, final SessionRef sessionRef) {
         synchronized (lock) {
             final var held = leases.values().stream()
-                    .filter(lease -> lease.active() && lease.profileId().equals(profileId) && lease.sessionRef().equals(sessionRef))
+                    .filter(leaseRecord -> leaseRecord.active() && leaseRecord.profileId().equals(profileId)
+                            && leaseRecord.sessionRef().equals(sessionRef))
                     .findFirst();
             return held.isPresent() ? new Acquisition(held.get().toApi(), false) : new Acquisition(grant(profileId, sessionRef).toApi(), true);
         }
@@ -156,8 +157,8 @@ public abstract class AbstractDeckServer implements DeckServer {
         synchronized (lock) {
             return leases.values().stream()
                     .filter(LeaseRecord::active)
-                    .filter(lease -> profileId == null || lease.profileId().equals(profileId))
-                    .filter(lease -> sessionRef == null || sessionRef.equals(lease.sessionRef()))
+                    .filter(leaseRecord -> profileId == null || leaseRecord.profileId().equals(profileId))
+                    .filter(leaseRecord -> sessionRef == null || sessionRef.equals(leaseRecord.sessionRef()))
                     .map(LeaseRecord::toApi)
                     .toList();
         }
@@ -173,9 +174,9 @@ public abstract class AbstractDeckServer implements DeckServer {
     @Override
     public Lease evict(final LeaseId leaseId) {
         synchronized (lock) {
-            final var lease = record(leaseId);
-            lease.end(LeaseState.EVICTED);
-            return lease.toApi();
+            final var leaseRecord = record(leaseId);
+            leaseRecord.end(LeaseState.EVICTED);
+            return leaseRecord.toApi();
         }
     }
 }

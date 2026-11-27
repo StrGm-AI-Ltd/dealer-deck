@@ -63,8 +63,8 @@ public class ChatController {
             @RequestHeader(value = "X-Session-Id", required = false) final @Nullable String sessionId,
             @RequestHeader(value = "X-Request-Priority", required = false) final @Nullable Integer requestPriority,
             final HttpServletRequest servletRequest) {
-        final var client = (ClientConfig) servletRequest.getAttribute(AuthFilter.CLIENT);
-        if (client == null) {
+        final var clientConfig = (ClientConfig) servletRequest.getAttribute(AuthFilter.CLIENT);
+        if (clientConfig == null) {
             throw new ApiException(UNAUTHORIZED, "authentication_error", "A client API key is required");
         }
         final JsonNode body;
@@ -87,29 +87,29 @@ public class ChatController {
         if (requestedModel.isBlank()) {
             throw new ApiException(BAD_REQUEST, "invalid_request_error", "Missing \"model\"");
         }
-        final var model = new ModelName(requestedModel);
+        final var modelName = new ModelName(requestedModel);
         // TODO(#62): say which DECK servers and model profiles the client may use, instead of its external-routing flag
-        if (scheduler.candidates(client, model).isEmpty()) {
+        if (scheduler.candidates(clientConfig, modelName).isEmpty()) {
             throw new ApiException(NOT_FOUND, "model_not_found",
-                    "No DECK profile serves \"" + model + "\" for client " + client.name()
-                            + (client.externalRouting() ? "" : " (external routing is off for this client)"));
+                    "No DECK profile serves \"" + modelName + "\" for client " + clientConfig.name()
+                            + (clientConfig.externalRouting() ? "" : " (external routing is off for this client)"));
         }
         final var priority = requestPriority == null ? Priorities.DEFAULT_REQUEST : requestPriority;
-        final var placement = scheduler.acquire(client, new SessionId(sessionId), model, priority);
-        final var server = placement.profile().server();
+        final var placement = scheduler.acquire(clientConfig, new SessionId(sessionId), modelName, priority);
+        final var serverRef = placement.profileRef().serverRef();
         final var forward = (ObjectNode) body.deepCopy();
-        forward.put("model", placement.profile().profile().getModel().value());
+        forward.put("model", placement.profileRef().profile().getModel().value());
         final var clientWantsUsage = body.path("stream_options").path("include_usage").isBoolean()
                 && body.path("stream_options").path("include_usage").booleanValue();
         forward.putObject("stream_options").put("include_usage", true);
-        final var request = HttpRequest.newBuilder(URI.create(server.config().url() + "/v1/chat/completions"))
-                .header("Authorization", "Bearer " + server.config().key())
+        final var request = HttpRequest.newBuilder(URI.create(serverRef.config().url() + "/v1/chat/completions"))
+                .header("Authorization", "Bearer " + serverRef.config().key())
                 .header("X-Lease-Id", placement.leaseId().value())
                 .header("Content-Type", "application/json")
                 .timeout(requestTimeout)
                 .POST(HttpRequest.BodyPublishers.ofString(forward.toString()));
-        if (server.providerAuthorization() != null) {
-            request.header("X-Provider-Authorization", server.providerAuthorization());
+        if (serverRef.providerAuthorization() != null) {
+            request.header("X-Provider-Authorization", serverRef.providerAuthorization());
         }
         final HttpResponse<InputStream> response;
         try {
@@ -119,7 +119,7 @@ public class ChatController {
             if (exception instanceof InterruptedException) {
                 currentThread().interrupt();
             }
-            throw new ApiException(SERVICE_UNAVAILABLE, "server_error", "DECK server " + server.name() + " unreachable");
+            throw new ApiException(SERVICE_UNAVAILABLE, "server_error", "DECK server " + serverRef.name() + " unreachable");
         }
         if (response.statusCode() != OK.value()) {
             scheduler.release(placement, 0, 0, 0);
@@ -172,8 +172,8 @@ public class ChatController {
             }
         };
         return ResponseEntity.ok().contentType(TEXT_EVENT_STREAM)
-                .header("X-Dealer-Server", server.name().value())
-                .header("X-Dealer-Profile", placement.profile().profile().getId().value())
+                .header("X-Dealer-Server", serverRef.name().value())
+                .header("X-Dealer-Profile", placement.profileRef().profile().getId().value())
                 .body(stream);
     }
 

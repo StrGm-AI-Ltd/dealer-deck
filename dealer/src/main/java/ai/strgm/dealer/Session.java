@@ -29,19 +29,19 @@ final class Session {
     private static final double TOKENS_PER_MILLION = 1_000_000.0;
 
     /** The lease a session holds; its profile and id are set and cleared together. */
-    record HeldLease(ModelProfileRef profile, LeaseId id) {}
+    record HeldLease(ModelProfileRef profileRef, LeaseId id) {}
 
-    private final ClientConfig client;
+    private final ClientConfig clientConfig;
     private final SessionId id;
     /** The model of the session's lease, or of its last one. */
-    private @Nullable ModelName model;
-    private @Nullable HeldLease lease;
+    private @Nullable ModelName modelName;
+    private @Nullable HeldLease heldLease;
     private SessionLeaseState leaseState = SessionLeaseState.NONE;
     private long leaseReadyAt;
     private long lastActivity = currentTimeMillis();
     private int inFlight;
     private boolean evictPending;
-    private @Nullable LeaseRequest pending;
+    private @Nullable LeaseRequest pendingLeaseRequest;
     private int requests;
     private long promptTokens;
     private long cachedTokens;
@@ -49,13 +49,13 @@ final class Session {
     // TODO(#104): a money amount with its currency, instead of a bare double whose currency only its name gives
     private double costUsd;
 
-    Session(final ClientConfig client, final SessionId id) {
-        this.client = client;
+    Session(final ClientConfig clientConfig, final SessionId id) {
+        this.clientConfig = clientConfig;
         this.id = id;
     }
 
-    ClientConfig client() {
-        return client;
+    ClientConfig clientConfig() {
+        return clientConfig;
     }
 
     SessionId id() {
@@ -64,7 +64,7 @@ final class Session {
 
     /** The reference DECK knows the session by. */
     SessionRef ref() {
-        return SessionRef.of(client.name(), id);
+        return SessionRef.of(clientConfig.name(), id);
     }
 
     /** Counts a new request, and restarts the session's idle time. */
@@ -74,57 +74,57 @@ final class Session {
     }
 
     /** The session's queued lease request, if any. */
-    @Nullable LeaseRequest pending() {
-        return pending;
+    @Nullable LeaseRequest pendingLeaseRequest() {
+        return pendingLeaseRequest;
     }
 
     void queue(final LeaseRequest leaseRequest) {
-        pending = leaseRequest;
+        pendingLeaseRequest = leaseRequest;
     }
 
     /** Forgets a queued lease request that was cancelled; a newer one stays. */
     void dequeue(final LeaseRequest leaseRequest) {
-        if (pending == leaseRequest) {
-            pending = null;
+        if (pendingLeaseRequest == leaseRequest) {
+            pendingLeaseRequest = null;
         }
     }
 
-    /** Whether a request for {@code model} can use the session's lease: it holds one for that model, not being evicted. */
-    boolean canReuse(final ModelName model) {
-        return lease != null && !evictPending && model.equals(this.model);
+    /** Whether a request for {@code modelName} can use the session's lease: it holds one for that model, not being evicted. */
+    boolean canReuse(final ModelName modelName) {
+        return heldLease != null && !evictPending && modelName.equals(this.modelName);
     }
 
     /** Places another request on the session's lease, which {@link #canReuse} allowed. */
     Placement reuse() {
-        final var held = requireNonNull(lease, "canReuse() found a lease");
+        requireNonNull(heldLease, "canReuse() found a lease");
         inFlight++;
-        return new Placement(this, held.profile(), held.id());
+        return new Placement(this, heldLease.profileRef(), heldLease.id());
     }
 
     boolean holdsLease() {
-        return lease != null;
+        return heldLease != null;
     }
 
-    /** Whether the session holds lease {@code leaseId} on {@code server}. */
-    boolean holds(final LeaseId leaseId, final DeckServerRef server) {
-        return lease != null && lease.id().equals(leaseId) && lease.profile().server() == server;
+    /** Whether the session holds lease {@code leaseId} on {@code serverRef}. */
+    boolean holds(final LeaseId leaseId, final DeckServerRef serverRef) {
+        return heldLease != null && heldLease.id().equals(leaseId) && heldLease.profileRef().serverRef() == serverRef;
     }
 
-    @Nullable HeldLease lease() {
-        return lease;
+    @Nullable HeldLease heldLease() {
+        return heldLease;
     }
 
     /** Places the session's queued lease request on a lease DECK has just granted. */
     Placement place(final LeaseRequest leaseRequest, final ModelProfileRef profile, final Lease granted) {
-        model = leaseRequest.model();
-        lease = new HeldLease(profile, granted.getId());
+        modelName = leaseRequest.modelName();
+        heldLease = new HeldLease(profile, granted.getId());
         if (granted.getState() == LeaseState.READY) {
             markReady(granted);
         } else {
             leaseState = SessionLeaseState.fromValue(granted.getState().getValue());
         }
         inFlight++;
-        pending = null;
+        pendingLeaseRequest = null;
         return new Placement(this, profile, granted.getId());
     }
 
@@ -195,21 +195,21 @@ final class Session {
     }
 
     private @Nullable HeldLease clearLease(final SessionLeaseState state) {
-        final var held = lease;
-        if (held != null) {
-            lease = null;
+        final var cleared = heldLease;
+        if (cleared != null) {
+            heldLease = null;
             evictPending = false;
             leaseState = state;
         }
-        return held;
+        return cleared;
     }
 
     SessionInfo toInfo(final long now) {
-        return new SessionInfo().client(client.name()).sessionId(id).model(model)
-                .deckServer(lease == null ? null : lease.profile().server().name())
-                .serverType(lease == null ? null : lease.profile().server().config().egress())
-                .profileId(lease == null ? null : lease.profile().profile().getId()).leaseId(lease == null ? null : lease.id())
-                .leaseState(leaseState).leaseAgeMs(lease == null || leaseReadyAt == 0 ? null : now - leaseReadyAt)
+        return new SessionInfo().client(clientConfig.name()).sessionId(id).model(modelName)
+                .deckServer(heldLease == null ? null : heldLease.profileRef().serverRef().name())
+                .serverType(heldLease == null ? null : heldLease.profileRef().serverRef().config().egress())
+                .profileId(heldLease == null ? null : heldLease.profileRef().profile().getId()).leaseId(heldLease == null ? null : heldLease.id())
+                .leaseState(leaseState).leaseAgeMs(heldLease == null || leaseReadyAt == 0 ? null : now - leaseReadyAt)
                 .idleMs(inFlight > 0 ? 0L : now - lastActivity).inFlight(inFlight).evictPending(evictPending)
                 .requests(requests).promptTokens(promptTokens).cachedTokens(cachedTokens)
                 .completionTokens(completionTokens).costUsd(costUsd);
