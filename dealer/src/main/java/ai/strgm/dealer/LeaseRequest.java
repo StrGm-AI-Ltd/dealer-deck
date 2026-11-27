@@ -4,6 +4,7 @@ import static java.lang.System.currentTimeMillis;
 
 import ai.strgm.dealer.Scheduler.Placement;
 import ai.strgm.types.ModelName;
+import ai.strgm.types.Priority;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -13,10 +14,10 @@ import java.util.concurrent.CompletableFuture;
  * @param arrivalOrder orders lease requests of equal priority by arrival
  * @param placement completed when dispatch places the request, or exceptionally when it's cancelled
  */
-record LeaseRequest(Session session, ModelName modelName, int requestPriority, long enqueuedAt, long arrivalOrder,
+record LeaseRequest(Session session, ModelName modelName, Priority requestPriority, long enqueuedAt, long arrivalOrder,
         CompletableFuture<Placement> placement) {
 
-    LeaseRequest(final Session session, final ModelName modelName, final int requestPriority, final long arrivalOrder) {
+    LeaseRequest(final Session session, final ModelName modelName, final Priority requestPriority, final long arrivalOrder) {
         this(session, modelName, requestPriority, currentTimeMillis(), arrivalOrder, new CompletableFuture<>());
     }
 }

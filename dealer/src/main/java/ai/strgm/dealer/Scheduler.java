@@ -3,7 +3,9 @@ package ai.strgm.dealer;
 import static java.lang.Integer.parseInt;
 import static java.lang.System.currentTimeMillis;
 import static java.lang.Thread.currentThread;
+import static java.util.Comparator.comparing;
 import static java.util.Comparator.comparingInt;
+import static java.util.Comparator.reverseOrder;
 import static org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
 
 import ai.strgm.dealer.DealerProperties.ClientConfig;
@@ -15,6 +17,7 @@ import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.deck.api.model.ModelProfile;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
+import ai.strgm.types.Priority;
 import ai.strgm.types.ProfileId;
 import ai.strgm.types.SessionId;
 import ai.strgm.types.SessionRef;
@@ -124,7 +127,7 @@ public class Scheduler {
     }
 
     /** Blocks until the request is placed on a ready lease. */
-    public Placement acquire(final ClientConfig clientConfig, final SessionId sessionId, final ModelName modelName, final int requestPriority) {
+    public Placement acquire(final ClientConfig clientConfig, final SessionId sessionId, final ModelName modelName, final Priority requestPriority) {
         final var placement = place(clientConfig, sessionId, modelName, requestPriority);
         try {
             awaitReady(placement);
@@ -141,7 +144,7 @@ public class Scheduler {
      * Places the request on its session's lease, or queues it for a new one. A session queues one acquisition at a
      * time (#64): a request that finds one queued waits for it, then tries again.
      */
-    private Placement place(final ClientConfig clientConfig, final SessionId sessionId, final ModelName modelName, final int requestPriority) {
+    private Placement place(final ClientConfig clientConfig, final SessionId sessionId, final ModelName modelName, final Priority requestPriority) {
         final Session session;
         synchronized (lock) {
             session = sessions.computeIfAbsent(sessionKey(clientConfig, sessionId), sessionRef -> new Session(clientConfig, sessionId));
@@ -304,8 +307,8 @@ public class Scheduler {
                     decks.release(releasedLease.profileRef().serverRef(), releasedLease.id());
                 }
             }
-            leaseRequests.sort(comparingInt((LeaseRequest queued) -> -queued.session().clientConfig().priority())
-                    .thenComparingInt(queued -> -queued.requestPriority()).thenComparingLong(LeaseRequest::arrivalOrder));
+            leaseRequests.sort(comparing((LeaseRequest queued) -> queued.session().clientConfig().priority(), reverseOrder())
+                    .thenComparing(LeaseRequest::requestPriority, reverseOrder()).thenComparingLong(LeaseRequest::arrivalOrder));
             final var queue = leaseRequests.iterator();
             while (queue.hasNext()) {
                 final var leaseRequest = queue.next();
@@ -351,7 +354,7 @@ public class Scheduler {
             final var leaseHolder = sessions.values().stream()
                     .filter(session -> session.holds(leaseId, target.serverRef()))
                     .findFirst();
-            if (leaseHolder.isEmpty() || leaseHolder.get().clientConfig().priority() >= leaseRequest.session().clientConfig().priority()) {
+            if (leaseHolder.isEmpty() || leaseHolder.get().clientConfig().priority().compareTo(leaseRequest.session().clientConfig().priority()) >= 0) {
                 return;
             }
             victims.add(leaseHolder.get());

@@ -11,6 +11,7 @@ import static org.springframework.http.MediaType.TEXT_EVENT_STREAM;
 
 import ai.strgm.dealer.DealerProperties.ClientConfig;
 import ai.strgm.types.ModelName;
+import ai.strgm.types.Priority;
 import ai.strgm.types.SessionId;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.BufferedReader;
@@ -79,9 +80,12 @@ public class ChatController {
         if (sessionId == null || sessionId.isBlank() || sessionId.length() > MAX_SESSION_ID_LENGTH) {
             throw new ApiException(BAD_REQUEST, "invalid_request_error", "Missing or invalid required header X-Session-Id");
         }
-        if (requestPriority != null && !Priorities.RANGE.contains(requestPriority)) {
+        final Priority priority;
+        try {
+            priority = requestPriority == null ? Priority.DEFAULT_REQUEST : new Priority(requestPriority);
+        } catch (IllegalArgumentException exception) {
             throw new ApiException(BAD_REQUEST, "invalid_request_error",
-                    "X-Request-Priority must be between " + Priorities.MIN + " and " + Priorities.MAX, "X-Request-Priority");
+                    "X-Request-Priority must be between " + Priority.MIN + " and " + Priority.MAX, "X-Request-Priority");
         }
         final var requestedModel = body.path("model").isString() ? body.path("model").asString() : "";
         if (requestedModel.isBlank()) {
@@ -94,7 +98,6 @@ public class ChatController {
                     "No DECK profile serves \"" + modelName + "\" for client " + clientConfig.name()
                             + (clientConfig.externalRouting() ? "" : " (external routing is off for this client)"));
         }
-        final var priority = requestPriority == null ? Priorities.DEFAULT_REQUEST : requestPriority;
         final var placement = scheduler.acquire(clientConfig, new SessionId(sessionId), modelName, priority);
         final var serverRef = placement.profileRef().serverRef();
         final var upstreamBody = (ObjectNode) body.deepCopy();

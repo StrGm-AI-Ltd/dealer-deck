@@ -2,6 +2,7 @@ package ai.strgm.dealer;
 
 import ai.strgm.dealer.api.model.ServerType;
 import ai.strgm.types.ClientName;
+import ai.strgm.types.Priority;
 import ai.strgm.types.ServerName;
 import java.util.List;
 import org.jspecify.annotations.Nullable;
@@ -14,13 +15,7 @@ public record DealerProperties(String metricsKey, Timers timers, Timeouts timeou
 
     /** A client: its API key, priority (1–100; only this can evict) and whether it may use external servers (D79). */
     // TODO(#62): clients move to the database, and their DECK servers and model profiles replace externalRouting
-    public record ClientConfig(ClientName name, String key, int priority, boolean externalRouting) {
-        public ClientConfig {
-            if (!Priorities.RANGE.contains(priority)) {
-                throw new IllegalArgumentException("Client " + name + ": priority " + priority + " isn't between "
-                        + Priorities.MIN + " and " + Priorities.MAX);
-            }
-        }
+    public record ClientConfig(ClientName name, String key, Priority priority, boolean externalRouting) {
     }
 
     /**

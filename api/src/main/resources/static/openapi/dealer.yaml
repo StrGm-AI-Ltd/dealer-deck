@@ -43,9 +43,7 @@ paths:
           required: false
           description: Orders this client's own requests (1–100, default 50). Never evicts.
           schema:
-            type: integer
-            minimum: 1
-            maximum: 100
+            $ref: 'common.yaml#/components/schemas/Priority'
       requestBody:
         required: true
         content:
@@ -182,7 +180,7 @@ components:
         name:
           $ref: 'common.yaml#/components/schemas/ClientName'
         priority:
-          type: integer
+          $ref: 'common.yaml#/components/schemas/Priority'
         external_routing:
           type: boolean
     QueuedRequest:
@@ -195,9 +193,9 @@ components:
         model:
           $ref: 'common.yaml#/components/schemas/ModelName'
         client_priority:
-          type: integer
+          $ref: 'common.yaml#/components/schemas/Priority'
         request_priority:
-          type: integer
+          $ref: 'common.yaml#/components/schemas/Priority'
         waiting_ms:
           type: integer
           format: int64
