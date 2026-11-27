@@ -106,7 +106,7 @@ public class DashboardView extends VerticalLayout {
         add(new H3("Sessions and leases"), sessions, new H3("Queue"), queue, new H3("Evictions"), evictions);
         final var decks = new HorizontalLayout();
         decks.setWidthFull();
-        deckClients.metricsApis().keySet().forEach(deckName -> {
+        deckClients.clientsByName().keySet().forEach(deckName -> {
             final var profiles = new Grid<ModelProfile>();
             profiles.addColumn(ModelProfile::getId).setHeader("Profile").setAutoWidth(true);
             profiles.addColumn(profile -> profile.getReadiness().getValue() + (profile.getReadiness() != Readiness.UNLOADED || profile.getLoadingTimeMs() == null
@@ -157,14 +157,14 @@ public class DashboardView extends VerticalLayout {
         DealerState dealer = null;
         String error = null;
         try {
-            dealer = dealerClient.metricsApi().getDealerState().getBody();
+            dealer = dealerClient.state();
         } catch (Exception exception) {
             error = exception.getMessage();
         }
         final Map<String, @Nullable DeckState> decks = new LinkedHashMap<>();
-        deckClients.metricsApis().forEach((deckName, metricsApi) -> {
+        deckClients.clientsByName().forEach((deckName, deckClient) -> {
             try {
-                decks.put(deckName, metricsApi.getDeckState().getBody());
+                decks.put(deckName, deckClient.state());
             } catch (Exception exception) {
                 decks.put(deckName, null);
             }
