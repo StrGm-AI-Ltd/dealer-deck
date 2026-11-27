@@ -5,6 +5,8 @@ import static java.lang.Math.min;
 import static java.lang.Math.round;
 import static java.lang.System.currentTimeMillis;
 import static java.lang.Thread.currentThread;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.springframework.http.HttpStatus.CONFLICT;
 
 import ai.strgm.deck.AbstractDeckServer;
 import ai.strgm.deck.ApiException;
@@ -28,15 +30,12 @@ import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.ProfileId;
 import ai.strgm.types.SessionRef;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.jspecify.annotations.Nullable;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
@@ -163,7 +162,7 @@ public class StubServer extends AbstractDeckServer {
                 .map(LeaseRecord::id)
                 .toList();
         if (!blockers.isEmpty()) {
-            throw new ApiException(HttpStatus.CONFLICT, "lease_conflict",
+            throw new ApiException(CONFLICT, "lease_conflict",
                     "Profile " + profileId + " is blocked by active leases", blockers);
         }
         final var isLoaded = profile.workers().stream()
@@ -249,14 +248,14 @@ public class StubServer extends AbstractDeckServer {
                 write(out, usage.toString());
             }
             addUsage(lease, prompt, 0, maxTokens, false);
-            out.write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
+            out.write("data: [DONE]\n\n".getBytes(UTF_8));
             out.flush();
         };
         return body;
     }
 
     private static void write(final java.io.OutputStream out, final String json) throws java.io.IOException {
-        out.write(("data: " + json + "\n\n").getBytes(StandardCharsets.UTF_8));
+        out.write(("data: " + json + "\n\n").getBytes(UTF_8));
         out.flush();
     }
 

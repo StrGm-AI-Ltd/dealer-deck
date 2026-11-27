@@ -2,6 +2,15 @@ package ai.strgm.deck.openai;
 
 import static java.lang.Math.max;
 import static java.lang.Thread.currentThread;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.springframework.http.HttpStatus.BAD_GATEWAY;
+import static org.springframework.http.HttpStatus.BAD_REQUEST;
+import static org.springframework.http.HttpStatus.CONFLICT;
+import static org.springframework.http.HttpStatus.GATEWAY_TIMEOUT;
+import static org.springframework.http.HttpStatus.OK;
+import static org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
+import static org.springframework.http.HttpStatus.TOO_MANY_REQUESTS;
+import static org.springframework.http.HttpStatus.UNAUTHORIZED;
 
 import ai.strgm.deck.AbstractDeckServer;
 import ai.strgm.deck.ApiException;
@@ -29,12 +38,10 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import org.jspecify.annotations.Nullable;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
@@ -102,7 +109,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
         final var upstreamModel = model(profileId);
         final var active = active(profileId);
         if (upstreamModel.maxLeases() != null && active.size() >= upstreamModel.maxLeases()) {
-            throw new ApiException(HttpStatus.CONFLICT, "lease_conflict",
+            throw new ApiException(CONFLICT, "lease_conflict",
                     "The instance budget of " + profileId + " (" + upstreamModel.maxLeases() + ") is in use", active);
         }
         return register(profileId, sessionRef, LeaseState.READY);
@@ -137,7 +144,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
     @Override
     public StreamingResponseBody chat(final LeaseId leaseId, final @Nullable String providerAuthorization, final JsonNode request) {
         if (providerAuthorization == null || providerAuthorization.isBlank()) {
-            throw new ApiException(HttpStatus.UNAUTHORIZED, "authentication_error",
+            throw new ApiException(UNAUTHORIZED, "authentication_error",
                     "Missing X-Provider-Authorization: this DECK server forwards the provider credential it receives (D104)");
         }
         final var lease = activeRecord(leaseId);
@@ -162,21 +169,21 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
             if (exception instanceof InterruptedException) {
                 currentThread().interrupt();
             }
-            throw new ApiException(HttpStatus.GATEWAY_TIMEOUT, "upstream_error", name + " unreachable: " + exception.getMessage());
+            throw new ApiException(GATEWAY_TIMEOUT, "upstream_error", name + " unreachable: " + exception.getMessage());
         }
-        if (response.statusCode() != HttpStatus.OK.value()) {
+        if (response.statusCode() != OK.value()) {
             final String text;
             try (var responseBody = response.body()) {
-                text = new String(responseBody.readAllBytes(), StandardCharsets.UTF_8);
+                text = new String(responseBody.readAllBytes(), UTF_8);
             } catch (Exception exception) {
-                throw new ApiException(HttpStatus.BAD_GATEWAY, "upstream_error", name + " error " + response.statusCode());
+                throw new ApiException(BAD_GATEWAY, "upstream_error", name + " error " + response.statusCode());
             }
             final var upstreamStatus = HttpStatus.resolve(response.statusCode());
-            final var status = upstreamStatus == null ? HttpStatus.SERVICE_UNAVAILABLE : switch (upstreamStatus) {
-                case TOO_MANY_REQUESTS -> HttpStatus.TOO_MANY_REQUESTS;
-                case UNAUTHORIZED, FORBIDDEN -> HttpStatus.UNAUTHORIZED;
-                case BAD_REQUEST, NOT_FOUND, UNPROCESSABLE_CONTENT -> HttpStatus.BAD_REQUEST;
-                default -> HttpStatus.SERVICE_UNAVAILABLE;
+            final var status = upstreamStatus == null ? SERVICE_UNAVAILABLE : switch (upstreamStatus) {
+                case TOO_MANY_REQUESTS -> TOO_MANY_REQUESTS;
+                case UNAUTHORIZED, FORBIDDEN -> UNAUTHORIZED;
+                case BAD_REQUEST, NOT_FOUND, UNPROCESSABLE_CONTENT -> BAD_REQUEST;
+                default -> SERVICE_UNAVAILABLE;
             };
             throw new UpstreamException(status, text.isBlank() ? "{\"error\":{\"message\":\"" + name + " error "
                     + response.statusCode() + "\",\"type\":\"upstream_error\"}}" : text,
@@ -186,7 +193,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
         final StreamingResponseBody stream = out -> {
             boolean sawUsage = false;
             long chars = 0;
-            try (var reader = new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
+            try (var reader = new BufferedReader(new InputStreamReader(response.body(), UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     if (line.startsWith(SSE_DATA_PREFIX)) {
@@ -206,7 +213,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
                             }
                         }
                     }
-                    out.write((line + "\n").getBytes(StandardCharsets.UTF_8));
+                    out.write((line + "\n").getBytes(UTF_8));
                     if (line.isEmpty()) {
                         out.flush();
                     }

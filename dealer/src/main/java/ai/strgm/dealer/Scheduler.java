@@ -4,6 +4,7 @@ import static java.lang.Integer.parseInt;
 import static java.lang.System.currentTimeMillis;
 import static java.lang.Thread.currentThread;
 import static java.util.Comparator.comparingInt;
+import static org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
 
 import ai.strgm.dealer.DealerProperties.ClientConfig;
 import ai.strgm.dealer.DeckRegistry.ModelProfileRef;
@@ -32,7 +33,6 @@ import java.util.stream.Stream;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -179,10 +179,10 @@ public class Scheduler {
         } catch (InterruptedException exception) {
             currentThread().interrupt();
             cancel(leaseRequest);
-            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", "Interrupted while queued");
+            throw new ApiException(SERVICE_UNAVAILABLE, "server_error", "Interrupted while queued");
         } catch (ExecutionException exception) {
             final var reason = exception.getCause() == null ? null : exception.getCause().getMessage();
-            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", reason != null ? reason : "The request couldn't be placed");
+            throw new ApiException(SERVICE_UNAVAILABLE, "server_error", reason != null ? reason : "The request couldn't be placed");
         }
     }
 
@@ -194,7 +194,7 @@ public class Scheduler {
             // it was cancelled: the next attempt decides what this request does
         } catch (InterruptedException exception) {
             currentThread().interrupt();
-            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", "Interrupted while queued");
+            throw new ApiException(SERVICE_UNAVAILABLE, "server_error", "Interrupted while queued");
         }
     }
 
@@ -228,7 +228,7 @@ public class Scheduler {
             }
             sleep(properties.timers().readinessPollMillis());
         }
-        throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", "Lease " + placement.leaseId() + " never became ready");
+        throw new ApiException(SERVICE_UNAVAILABLE, "server_error", "Lease " + placement.leaseId() + " never became ready");
     }
 
     /** Called when a request's stream ends: accounts usage and applies a pending eviction. */

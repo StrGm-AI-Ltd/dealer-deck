@@ -1,9 +1,10 @@
 package ai.strgm.deck;
 
+import static org.springframework.http.HttpStatus.BAD_REQUEST;
+import static org.springframework.http.MediaType.TEXT_EVENT_STREAM;
+
 import ai.strgm.types.LeaseId;
 import org.jspecify.annotations.Nullable;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -33,17 +34,17 @@ public class ChatController {
             @RequestHeader(value = "X-Provider-Authorization", required = false) final @Nullable String providerAuthorization,
             @RequestBody final String body) {
         if (leaseId == null || leaseId.isBlank()) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "Missing required header X-Lease-Id");
+            throw new ApiException(BAD_REQUEST, "invalid_request_error", "Missing required header X-Lease-Id");
         }
         final JsonNode request;
         try {
             request = mapper.readTree(body);
         } catch (JacksonException exception) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "The request body isn't valid JSON");
+            throw new ApiException(BAD_REQUEST, "invalid_request_error", "The request body isn't valid JSON");
         }
         if (!Json.bool(request.path("stream"))) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "Streaming only: set \"stream\": true");
+            throw new ApiException(BAD_REQUEST, "invalid_request_error", "Streaming only: set \"stream\": true");
         }
-        return ResponseEntity.ok().contentType(MediaType.TEXT_EVENT_STREAM).body(server.chat(new LeaseId(leaseId), providerAuthorization, request));
+        return ResponseEntity.ok().contentType(TEXT_EVENT_STREAM).body(server.chat(new LeaseId(leaseId), providerAuthorization, request));
     }
 }

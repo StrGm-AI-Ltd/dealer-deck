@@ -2,6 +2,10 @@ package ai.strgm.deck;
 
 import static java.util.Comparator.comparing;
 import static java.util.stream.Collectors.joining;
+import static org.springframework.http.HttpStatus.BAD_REQUEST;
+import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
+import static org.springframework.http.HttpStatus.NOT_FOUND;
+import static org.springframework.http.MediaType.APPLICATION_JSON;
 
 import ai.strgm.deck.api.model.ErrorBody;
 import ai.strgm.deck.api.model.ErrorResponse;
@@ -14,7 +18,6 @@ import org.springframework.beans.TypeMismatchException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
@@ -40,7 +43,7 @@ public class Errors extends ResponseEntityExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(Errors.class);
 
     static ResponseEntity<Object> of(final HttpStatusCode status, final String type, final String message, final @Nullable String param) {
-        return ResponseEntity.status(status).contentType(MediaType.APPLICATION_JSON)
+        return ResponseEntity.status(status).contentType(APPLICATION_JSON)
                 .body(new ErrorResponse(new ErrorBody(message, type).param(param)));
     }
 
@@ -55,7 +58,7 @@ public class Errors extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(UpstreamException.class)
     public ResponseEntity<String> handle(final UpstreamException exception) {
-        final var response = ResponseEntity.status(exception.status).contentType(MediaType.APPLICATION_JSON);
+        final var response = ResponseEntity.status(exception.status).contentType(APPLICATION_JSON);
         if (exception.retryAfter != null) {
             response.header("Retry-After", exception.retryAfter);
         }
@@ -66,7 +69,7 @@ public class Errors extends ResponseEntityExceptionHandler {
     public ResponseEntity<Object> handle(final ApiException exception) {
         final var blockers = exception.blockers;
         if (blockers != null) {
-            return ResponseEntity.status(exception.status).contentType(MediaType.APPLICATION_JSON)
+            return ResponseEntity.status(exception.status).contentType(APPLICATION_JSON)
                     .body(new LeaseConflict(new ErrorBody(message(exception), exception.type), blockers));
         }
         return of(exception.status, exception.type, message(exception), null);
@@ -80,7 +83,7 @@ public class Errors extends ResponseEntityExceptionHandler {
                 .sorted()
                 .findFirst()
                 .orElse(null);
-        return invalid(HttpStatus.BAD_REQUEST, "Invalid request: " + exception.getMessage(),
+        return invalid(BAD_REQUEST, "Invalid request: " + exception.getMessage(),
                 first == null ? null : first.substring(first.lastIndexOf('.') + 1));
     }
 
@@ -88,7 +91,7 @@ public class Errors extends ResponseEntityExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Object> handle(final Exception exception) {
         log.error("Unhandled error", exception);
-        return of(HttpStatus.INTERNAL_SERVER_ERROR, "server_error", "Internal server error", null);
+        return of(INTERNAL_SERVER_ERROR, "server_error", "Internal server error", null);
     }
 
     @Override
@@ -157,11 +160,11 @@ public class Errors extends ResponseEntityExceptionHandler {
     @Override
     protected ResponseEntity<Object> handleExceptionInternal(final Exception exception, final @Nullable Object body,
             final HttpHeaders headers, final HttpStatusCode status, final WebRequest request) {
-        final var type = status.isSameCodeAs(HttpStatus.NOT_FOUND) ? "not_found" : status.is4xxClientError() ? "invalid_request_error" : "server_error";
+        final var type = status.isSameCodeAs(NOT_FOUND) ? "not_found" : status.is4xxClientError() ? "invalid_request_error" : "server_error";
         final var detail = exception instanceof NoResourceFoundException noResource ? "Unknown path: /" + noResource.getResourcePath()
                 : exception instanceof org.springframework.web.ErrorResponse errorResponse ? errorResponse.getBody().getDetail() : null;
         final var message = detail != null ? detail : HttpStatus.valueOf(status.value()).getReasonPhrase();
-        return ResponseEntity.status(status).headers(headers).contentType(MediaType.APPLICATION_JSON)
+        return ResponseEntity.status(status).headers(headers).contentType(APPLICATION_JSON)
                 .body(new ErrorResponse(new ErrorBody(message, type)));
     }
 }

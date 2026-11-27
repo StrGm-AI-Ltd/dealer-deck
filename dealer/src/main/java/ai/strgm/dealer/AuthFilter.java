@@ -1,11 +1,12 @@
 package ai.strgm.dealer;
 
+import static org.springframework.http.HttpStatus.UNAUTHORIZED;
+
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -41,7 +42,7 @@ public class AuthFilter extends OncePerRequestFilter {
         } else if (key.equals(properties.metricsKey()) && request.getRequestURI().startsWith("/metrics")) {
             chain.doFilter(request, response);
         } else {
-            response.setStatus(HttpStatus.UNAUTHORIZED.value());
+            response.setStatus(UNAUTHORIZED.value());
             response.setContentType("application/json");
             response.getWriter().write("{\"error\":{\"message\":\"Invalid API key\",\"type\":\"authentication_error\"}}");
         }

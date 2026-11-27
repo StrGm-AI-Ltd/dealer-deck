@@ -1,6 +1,8 @@
 package ai.strgm.deck;
 
 import static java.lang.Math.max;
+import static org.springframework.http.HttpStatus.CONFLICT;
+import static org.springframework.http.HttpStatus.NOT_FOUND;
 
 import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseState;
@@ -11,7 +13,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.jspecify.annotations.Nullable;
-import org.springframework.http.HttpStatus;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -37,13 +38,13 @@ public abstract class AbstractDeckServer implements DeckServer {
     }
 
     protected static ApiException unknownProfile(final ProfileId profileId) {
-        return new ApiException(HttpStatus.NOT_FOUND, "not_found", "Unknown profile: " + profileId);
+        return new ApiException(NOT_FOUND, "not_found", "Unknown profile: " + profileId);
     }
 
     private LeaseRecord record(final LeaseId leaseId) {
         final var lease = leases.get(leaseId);
         if (lease == null) {
-            throw new ApiException(HttpStatus.NOT_FOUND, "not_found", "Unknown lease: " + leaseId);
+            throw new ApiException(NOT_FOUND, "not_found", "Unknown lease: " + leaseId);
         }
         return lease;
     }
@@ -53,7 +54,7 @@ public abstract class AbstractDeckServer implements DeckServer {
         synchronized (lock) {
             final var lease = record(leaseId);
             if (!lease.active()) {
-                throw new ApiException(HttpStatus.CONFLICT, "lease_inactive", "Lease " + leaseId + " is " + lease.state().getValue());
+                throw new ApiException(CONFLICT, "lease_inactive", "Lease " + leaseId + " is " + lease.state().getValue());
             }
             return lease;
         }

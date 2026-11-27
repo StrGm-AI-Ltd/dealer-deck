@@ -2,6 +2,7 @@ package ai.strgm.dealer;
 
 import static java.lang.System.getenv;
 import static java.util.Objects.requireNonNull;
+import static org.springframework.http.HttpStatus.CONFLICT;
 
 import ai.strgm.dealer.api.model.ServerType;
 import ai.strgm.deck.api.client.LeasesApi;
@@ -20,7 +21,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import org.jspecify.annotations.Nullable;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -122,7 +122,7 @@ public class DeckRegistry {
             return requireNonNull(profileRef.server().leases().acquireLease(new LeaseRequest(profileRef.profile().getId(), sessionRef)).getBody(),
                     "no lease in the response");
         } catch (HttpClientErrorException exception) {
-            if (exception.getStatusCode().isSameCodeAs(HttpStatus.CONFLICT)) {
+            if (exception.getStatusCode().isSameCodeAs(CONFLICT)) {
                 throw new Blocked(mapper.readValue(exception.getResponseBodyAsString(), LeaseConflict.class).getBlockers());
             }
             throw exception;

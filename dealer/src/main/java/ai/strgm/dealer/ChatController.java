@@ -1,6 +1,13 @@
 package ai.strgm.dealer;
 
 import static java.lang.Thread.currentThread;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.springframework.http.HttpStatus.BAD_REQUEST;
+import static org.springframework.http.HttpStatus.NOT_FOUND;
+import static org.springframework.http.HttpStatus.OK;
+import static org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
+import static org.springframework.http.HttpStatus.UNAUTHORIZED;
+import static org.springframework.http.MediaType.TEXT_EVENT_STREAM;
 
 import ai.strgm.dealer.DealerProperties.ClientConfig;
 import ai.strgm.types.ModelName;
@@ -13,11 +20,9 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import org.jspecify.annotations.Nullable;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -60,32 +65,32 @@ public class ChatController {
             final HttpServletRequest servletRequest) {
         final var client = (ClientConfig) servletRequest.getAttribute(AuthFilter.CLIENT);
         if (client == null) {
-            throw new ApiException(HttpStatus.UNAUTHORIZED, "authentication_error", "A client API key is required");
+            throw new ApiException(UNAUTHORIZED, "authentication_error", "A client API key is required");
         }
         final JsonNode body;
         try {
             body = mapper.readTree(raw);
         } catch (JacksonException exception) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "The request body isn't valid JSON");
+            throw new ApiException(BAD_REQUEST, "invalid_request_error", "The request body isn't valid JSON");
         }
         if (!(body.path("stream").isBoolean() && body.path("stream").booleanValue())) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "DEALER streams only in v0.5: set \"stream\": true");
+            throw new ApiException(BAD_REQUEST, "invalid_request_error", "DEALER streams only in v0.5: set \"stream\": true");
         }
         if (sessionId == null || sessionId.isBlank() || sessionId.length() > MAX_SESSION_ID_LENGTH) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "Missing or invalid required header X-Session-Id");
+            throw new ApiException(BAD_REQUEST, "invalid_request_error", "Missing or invalid required header X-Session-Id");
         }
         if (requestPriority != null && !Priorities.RANGE.contains(requestPriority)) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error",
+            throw new ApiException(BAD_REQUEST, "invalid_request_error",
                     "X-Request-Priority must be between " + Priorities.MIN + " and " + Priorities.MAX, "X-Request-Priority");
         }
         final var requestedModel = body.path("model").isString() ? body.path("model").asString() : "";
         if (requestedModel.isBlank()) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "Missing \"model\"");
+            throw new ApiException(BAD_REQUEST, "invalid_request_error", "Missing \"model\"");
         }
         final var model = new ModelName(requestedModel);
         // TODO(#62): say which DECK servers and model profiles the client may use, instead of its external-routing flag
         if (scheduler.candidates(client, model).isEmpty()) {
-            throw new ApiException(HttpStatus.NOT_FOUND, "model_not_found",
+            throw new ApiException(NOT_FOUND, "model_not_found",
                     "No DECK profile serves \"" + model + "\" for client " + client.name()
                             + (client.externalRouting() ? "" : " (external routing is off for this client)"));
         }
@@ -114,13 +119,13 @@ public class ChatController {
             if (exception instanceof InterruptedException) {
                 currentThread().interrupt();
             }
-            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", "DECK server " + server.name() + " unreachable");
+            throw new ApiException(SERVICE_UNAVAILABLE, "server_error", "DECK server " + server.name() + " unreachable");
         }
-        if (response.statusCode() != HttpStatus.OK.value()) {
+        if (response.statusCode() != OK.value()) {
             scheduler.release(placement, 0, 0, 0);
             String text;
             try (var responseBody = response.body()) {
-                text = new String(responseBody.readAllBytes(), StandardCharsets.UTF_8);
+                text = new String(responseBody.readAllBytes(), UTF_8);
             } catch (Exception exception) {
                 text = "";
             }
@@ -132,7 +137,7 @@ public class ChatController {
             long cached = 0;
             long completion = 0;
             boolean skipBlank = false;
-            try (var reader = new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
+            try (var reader = new BufferedReader(new InputStreamReader(response.body(), UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     if (line.startsWith(SSE_DATA_PREFIX)) {
@@ -157,7 +162,7 @@ public class ChatController {
                         skipBlank = false;
                         continue;
                     }
-                    out.write((line + "\n").getBytes(StandardCharsets.UTF_8));
+                    out.write((line + "\n").getBytes(UTF_8));
                     if (line.isEmpty()) {
                         out.flush();
                     }
@@ -166,7 +171,7 @@ public class ChatController {
                 scheduler.release(placement, prompt, cached, completion);
             }
         };
-        return ResponseEntity.ok().contentType(MediaType.TEXT_EVENT_STREAM)
+        return ResponseEntity.ok().contentType(TEXT_EVENT_STREAM)
                 .header("X-Dealer-Server", server.name().value())
                 .header("X-Dealer-Profile", placement.profile().profile().getId().value())
                 .body(stream);
