@@ -3,37 +3,28 @@ package ai.strgm.dealer.service;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import ai.strgm.dealer.model.Placement;
+import ai.strgm.deck.client.DeckChatStream;
+import ai.strgm.deck.client.model.DeckChatEvent;
 import ai.strgm.types.ProfileId;
 import ai.strgm.types.ServerName;
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 
 /**
  * A completion streaming from DECK. It relays DECK's server-sent events, drops the usage-only chunk the client didn't
  * ask for, and ends the request on its lease with the usage DECK reported.
  */
 public final class ChatStream {
-    /** The prefix of a server-sent event's data line. */
-    private static final String SSE_DATA_PREFIX = "data:";
-
     private final Placement placement;
-    private final InputStream deckEvents;
+    private final DeckChatStream deckEvents;
     private final boolean clientWantsUsage;
     private final Scheduler scheduler;
-    private final ObjectMapper mapper;
 
-    ChatStream(final Placement placement, final InputStream deckEvents, final boolean clientWantsUsage, final Scheduler scheduler,
-            final ObjectMapper mapper) {
+    ChatStream(final Placement placement, final DeckChatStream deckEvents, final boolean clientWantsUsage, final Scheduler scheduler) {
         this.placement = placement;
         this.deckEvents = deckEvents;
         this.clientWantsUsage = clientWantsUsage;
         this.scheduler = scheduler;
-        this.mapper = mapper;
     }
 
     /** The DECK server serving the completion. */
@@ -51,43 +42,22 @@ public final class ChatStream {
         long promptTokens = 0;
         long cachedTokens = 0;
         long completionTokens = 0;
-        boolean skipBlank = false;
-        try (var reader = new BufferedReader(new InputStreamReader(deckEvents, UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (line.startsWith(SSE_DATA_PREFIX)) {
-                    final var eventData = line.substring(SSE_DATA_PREFIX.length()).trim();
-                    if (eventData.startsWith("{")) {
-                        final var chunk = mapper.readTree(eventData);
-                        final var usage = chunk.path("usage");
-                        if (usage.isObject()) {
-                            promptTokens = number(usage.path("prompt_tokens"));
-                            cachedTokens = number(usage.path("prompt_tokens_details").path("cached_tokens"));
-                            completionTokens = number(usage.path("completion_tokens"));
-                            // Nebius attaches usage to every chunk: only a usage-only chunk (no choices) is the
-                            // one the client didn't ask for, so a chunk that carries text is always forwarded
-                            if (!clientWantsUsage && chunk.path("choices").isEmpty()) {
-                                skipBlank = true;
-                                continue;
-                            }
-                        }
-                    }
+        try (deckEvents) {
+            DeckChatEvent event;
+            while ((event = deckEvents.nextEvent()) != null) {
+                if (event.usage() != null) {
+                    promptTokens = event.usage().promptTokens();
+                    cachedTokens = event.usage().cachedTokens();
+                    completionTokens = event.usage().completionTokens();
                 }
-                if (line.isEmpty() && skipBlank) {
-                    skipBlank = false;
+                if (event.usageOnly() && !clientWantsUsage) {
                     continue;
                 }
-                out.write((line + "\n").getBytes(UTF_8));
-                if (line.isEmpty()) {
-                    out.flush();
-                }
+                out.write(event.text().getBytes(UTF_8));
+                out.flush();
             }
         } finally {
             scheduler.endRequest(placement, promptTokens, cachedTokens, completionTokens);
         }
-    }
-
-    private static long number(final JsonNode node) {
-        return node.isNumber() ? node.longValue() : 0;
     }
 }

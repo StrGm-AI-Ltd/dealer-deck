@@ -1,0 +1,18 @@
+plugins {
+    id 'java-library'
+    id 'io.spring.dependency-management'
+}
+
+dependencyManagement {
+    imports {
+        mavenBom 'org.springframework.boot:spring-boot-dependencies:4.1.1'
+    }
+}
+
+// DECK's client: one DeckClient per DECK server, with the DECK API's features as Java methods. It's built on the HTTP
+// interfaces generated from the DECK document (the api module), and hides the HTTP underneath. DEALER and the DEALER
+// UI use it.
+dependencies {
+    api project(':api')
+    api 'tools.jackson.core:jackson-databind'
+}
