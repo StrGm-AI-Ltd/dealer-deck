@@ -13,7 +13,7 @@ import java.util.concurrent.CompletableFuture;
  * @param placement completed when dispatch places the request, or exceptionally when it's cancelled
  */
 public record LeaseRequest(Session session, ModelName modelName, Priority requestPriority, Instant enqueuedAt, long arrivalOrder,
-        CompletableFuture<Placement> placement) {
+        CompletableFuture<RequestPlacement> placement) {
 
     public LeaseRequest(final Session session, final ModelName modelName, final Priority requestPriority, final long arrivalOrder) {
         this(session, modelName, requestPriority, Instant.now(), arrivalOrder, new CompletableFuture<>());

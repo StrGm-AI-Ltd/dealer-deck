@@ -94,10 +94,10 @@ public final class Session {
     }
 
     /** Places another request on the session's lease, which {@link #canReuseLease} allowed. */
-    public Placement reuseLease() {
+    public RequestPlacement reuseLease() {
         requireNonNull(heldLease, "canReuse() found a lease");
         inFlight++;
-        return new Placement(this, heldLease.profileRef(), heldLease.id());
+        return new RequestPlacement(this, heldLease.profileRef(), heldLease.id());
     }
 
     public boolean holdsLease() {
@@ -114,7 +114,7 @@ public final class Session {
     }
 
     /** Places the session's queued lease request on a lease DECK has just granted. */
-    public Placement placeOnLease(final LeaseRequest leaseRequest, final ModelProfileRef profileRef, final DeckLease grantedLease) {
+    public RequestPlacement placeOnLease(final LeaseRequest leaseRequest, final ModelProfileRef profileRef, final DeckLease grantedLease) {
         modelName = leaseRequest.modelName();
         heldLease = new HeldLease(profileRef, grantedLease.id());
         if (grantedLease.state() == LeaseState.READY) {
@@ -124,7 +124,7 @@ public final class Session {
         }
         inFlight++;
         pendingLeaseRequest = null;
-        return new Placement(this, profileRef, grantedLease.id());
+        return new RequestPlacement(this, profileRef, grantedLease.id());
     }
 
     public boolean isReady() {

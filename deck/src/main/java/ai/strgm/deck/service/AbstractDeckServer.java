@@ -6,7 +6,7 @@ import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.deck.config.DeckProperties;
 import ai.strgm.deck.exception.LeaseInactiveException;
 import ai.strgm.deck.exception.UnknownLeaseException;
-import ai.strgm.deck.model.Acquisition;
+import ai.strgm.deck.model.LeaseAcquisition;
 import ai.strgm.deck.model.LeaseRecord;
 import ai.strgm.deck.model.LeaseSnapshot;
 import ai.strgm.types.LeaseId;
@@ -129,14 +129,14 @@ public abstract class AbstractDeckServer implements DeckServer {
      * would ever release (#65).
      */
     @Override
-    public final Acquisition acquireLease(final ProfileId profileId, final SessionRef sessionRef) {
+    public final LeaseAcquisition acquireLease(final ProfileId profileId, final SessionRef sessionRef) {
         synchronized (lock) {
             final var heldLeaseRecord = leases.values().stream()
                     .filter(leaseRecord -> leaseRecord.active() && leaseRecord.profileId().equals(profileId)
                             && leaseRecord.sessionRef().equals(sessionRef))
                     .findFirst();
-            return heldLeaseRecord.isPresent() ? new Acquisition(heldLeaseRecord.get().snapshot(), false)
-                    : new Acquisition(grantLease(profileId, sessionRef).snapshot(), true);
+            return heldLeaseRecord.isPresent() ? new LeaseAcquisition(heldLeaseRecord.get().snapshot(), false)
+                    : new LeaseAcquisition(grantLease(profileId, sessionRef).snapshot(), true);
         }
     }
 

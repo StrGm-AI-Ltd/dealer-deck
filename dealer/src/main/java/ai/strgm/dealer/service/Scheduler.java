@@ -18,7 +18,7 @@ import ai.strgm.dealer.model.Eviction;
 import ai.strgm.dealer.model.LeaseRequest;
 import ai.strgm.dealer.model.LeaseRequestSnapshot;
 import ai.strgm.dealer.model.ModelProfileRef;
-import ai.strgm.dealer.model.Placement;
+import ai.strgm.dealer.model.RequestPlacement;
 import ai.strgm.dealer.model.Session;
 import ai.strgm.dealer.model.SessionSnapshot;
 import ai.strgm.deck.api.model.LeaseState;
@@ -131,7 +131,7 @@ public class Scheduler {
     }
 
     /** Blocks until the request is placed on a ready lease. */
-    public Placement acquireLease(final ClientConfig clientConfig, final SessionId sessionId, final ModelName modelName, final Priority requestPriority) {
+    public RequestPlacement acquireLease(final ClientConfig clientConfig, final SessionId sessionId, final ModelName modelName, final Priority requestPriority) {
         final var placement = placeRequest(clientConfig, sessionId, modelName, requestPriority);
         try {
             awaitReady(placement);
@@ -148,7 +148,7 @@ public class Scheduler {
      * Places the request on its session's lease, or queues it for a new one. A session queues one acquisition at a
      * time (#64): a request that finds one queued waits for it, then tries again.
      */
-    private Placement placeRequest(final ClientConfig clientConfig, final SessionId sessionId, final ModelName modelName, final Priority requestPriority) {
+    private RequestPlacement placeRequest(final ClientConfig clientConfig, final SessionId sessionId, final ModelName modelName, final Priority requestPriority) {
         final Session session;
         synchronized (lock) {
             session = sessions.computeIfAbsent(sessionKey(clientConfig, sessionId), sessionRef -> new Session(clientConfig, sessionId));
@@ -192,7 +192,7 @@ public class Scheduler {
     }
 
     /** Waits for the request's own acquisition to be placed. */
-    private Placement awaitPlacement(final LeaseRequest leaseRequest) {
+    private RequestPlacement awaitPlacement(final LeaseRequest leaseRequest) {
         try {
             return leaseRequest.placement().get();
         } catch (InterruptedException exception) {
@@ -230,7 +230,7 @@ public class Scheduler {
     }
 
     /** Waits for the placement's lease to be ready, asking DECK until the session knows it is. */
-    private void awaitReady(final Placement placement) {
+    private void awaitReady(final RequestPlacement placement) {
         final var deadline = Instant.now().plus(Duration.ofSeconds(properties.timers().readinessTimeoutSeconds()));
         while (Instant.now().isBefore(deadline)) {
             synchronized (lock) {
@@ -251,7 +251,7 @@ public class Scheduler {
     }
 
     /** Called when a request's stream ends: accounts usage and applies a pending eviction. */
-    public void endRequest(final Placement placement, final long promptTokens, final long cachedTokens, final long completionTokens) {
+    public void endRequest(final RequestPlacement placement, final long promptTokens, final long cachedTokens, final long completionTokens) {
         synchronized (lock) {
             placement.session().endRequest(promptTokens, cachedTokens, completionTokens, placement.profileRef().profile().prices());
             if (placement.session().evictionDue()) {

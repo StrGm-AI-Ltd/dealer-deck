@@ -130,11 +130,11 @@ public class DashboardView extends VerticalLayout {
     }
 
     /** What one refresh read: DEALER's state, or why it couldn't be read, and each DECK server's state, or null if unreachable. */
-    private record Snapshot(@Nullable DealerSnapshot dealer, @Nullable String dealerError, Map<String, @Nullable DeckServerState> decks) {}
+    private record RefreshedMetrics(@Nullable DealerSnapshot dealer, @Nullable String dealerError, Map<String, @Nullable DeckServerState> decks) {}
 
     @Override
     protected void onAttach(final AttachEvent event) {
-        apply(fetchSnapshot());
+        apply(fetchMetrics());
         // A browser-side timer calls tick() every second; each response carries the grid updates.
         getElement().executeJs("const el = $0; clearInterval(el.__dealerTimer);"
                 + " el.__dealerTimer = setInterval(() => el.$server.tick(), " + refreshMillis + ");", getElement());
@@ -147,11 +147,11 @@ public class DashboardView extends VerticalLayout {
 
     @ClientCallable
     public void tick() {
-        apply(fetchSnapshot());
+        apply(fetchMetrics());
     }
 
     /** Reads the metrics APIs off the UI lock; {@link #apply} then updates the grids under it. */
-    private Snapshot fetchSnapshot() {
+    private RefreshedMetrics fetchMetrics() {
         DealerSnapshot dealer = null;
         String error = null;
         try {
@@ -167,11 +167,11 @@ public class DashboardView extends VerticalLayout {
                 decks.put(deckName, null);
             }
         });
-        return new Snapshot(dealer, error, decks);
+        return new RefreshedMetrics(dealer, error, decks);
     }
 
-    private void apply(final Snapshot snapshot) {
-        final var dealerSnapshot = snapshot.dealer();
+    private void apply(final RefreshedMetrics refreshedMetrics) {
+        final var dealerSnapshot = refreshedMetrics.dealer();
         if (dealerSnapshot != null) {
             sessions.setItems(dealerSnapshot.sessions());
             queue.setItems(dealerSnapshot.queue());
@@ -180,9 +180,9 @@ public class DashboardView extends VerticalLayout {
             dealerStatus.setText("DEALER: " + dealerSnapshot.sessions().size() + " sessions, " + dealerSnapshot.queue().size() + " queued, "
                     + dealerSnapshot.evictions().size() + " evictions · " + TIME.format(Instant.now()));
         } else {
-            dealerStatus.setText("DEALER unreachable: " + snapshot.dealerError());
+            dealerStatus.setText("DEALER unreachable: " + refreshedMetrics.dealerError());
         }
-        snapshot.decks().forEach((deckName, deck) -> {
+        refreshedMetrics.decks().forEach((deckName, deck) -> {
             final var statusLabel = requireNonNull(deckStatus.get(deckName), "every configured DECK server has a status label");
             if (deck == null) {
                 statusLabel.setText("unreachable");

@@ -1,6 +1,6 @@
 package ai.strgm.deck.service;
 
-import ai.strgm.deck.model.Acquisition;
+import ai.strgm.deck.model.LeaseAcquisition;
 import ai.strgm.deck.model.LeaseSnapshot;
 import ai.strgm.deck.model.OfferedProfiles;
 import ai.strgm.deck.model.ServerState;
@@ -23,7 +23,7 @@ public interface DeckServer {
      * Acquires a lease on {@code profileId} for {@code sessionRef}, idempotently: if the session already holds an
      * active lease on the profile, that lease is returned unchanged ({@code created} is false).
      */
-    Acquisition acquireLease(ProfileId profileId, SessionRef sessionRef);
+    LeaseAcquisition acquireLease(ProfileId profileId, SessionRef sessionRef);
 
     LeaseSnapshot lease(LeaseId leaseId);
 

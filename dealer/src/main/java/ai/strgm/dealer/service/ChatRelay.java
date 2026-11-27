@@ -2,7 +2,7 @@ package ai.strgm.dealer.service;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-import ai.strgm.dealer.model.Placement;
+import ai.strgm.dealer.model.RequestPlacement;
 import ai.strgm.deck.client.DeckChatStream;
 import ai.strgm.deck.client.model.DeckChatEvent;
 import ai.strgm.types.ProfileId;
@@ -11,16 +11,16 @@ import java.io.IOException;
 import java.io.OutputStream;
 
 /**
- * A completion streaming from DECK. It relays DECK's server-sent events, drops the usage-only chunk the client didn't
- * ask for, and ends the request on its lease with the usage DECK reported.
+ * Relays a chat completion from DECK to the client: it passes on DECK's server-sent events, drops the usage-only chunk
+ * the client didn't ask for, and ends the request on its lease with the usage DECK reported.
  */
-public final class ChatStream {
-    private final Placement placement;
+public final class ChatRelay {
+    private final RequestPlacement placement;
     private final DeckChatStream deckEvents;
     private final boolean clientWantsUsage;
     private final Scheduler scheduler;
 
-    ChatStream(final Placement placement, final DeckChatStream deckEvents, final boolean clientWantsUsage, final Scheduler scheduler) {
+    ChatRelay(final RequestPlacement placement, final DeckChatStream deckEvents, final boolean clientWantsUsage, final Scheduler scheduler) {
         this.placement = placement;
         this.deckEvents = deckEvents;
         this.clientWantsUsage = clientWantsUsage;

@@ -1,19 +1,27 @@
-package ai.strgm.dealer.controller;
+package ai.strgm.deck.controller;
 
 import static ai.strgm.util.Nulls.mapNullable;
 import static java.util.Comparator.comparing;
 import static java.util.stream.Collectors.joining;
+import static org.springframework.http.HttpStatus.BAD_GATEWAY;
 import static org.springframework.http.HttpStatus.BAD_REQUEST;
+import static org.springframework.http.HttpStatus.CONFLICT;
+import static org.springframework.http.HttpStatus.GATEWAY_TIMEOUT;
 import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
 import static org.springframework.http.HttpStatus.NOT_FOUND;
 import static org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
+import static org.springframework.http.HttpStatus.TOO_MANY_REQUESTS;
+import static org.springframework.http.HttpStatus.UNAUTHORIZED;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 
-import ai.strgm.dealer.exception.DeckErrorException;
-import ai.strgm.dealer.exception.DeckUnreachableException;
-import ai.strgm.dealer.exception.LeaseUnavailableException;
-import ai.strgm.dealer.exception.ModelNotFoundException;
-import ai.strgm.dealer.mapper.DealerApiMapper;
+import ai.strgm.deck.exception.LeaseConflictException;
+import ai.strgm.deck.exception.LeaseInactiveException;
+import ai.strgm.deck.exception.ProviderCredentialMissingException;
+import ai.strgm.deck.exception.ProviderErrorException;
+import ai.strgm.deck.exception.ProviderUnreachableException;
+import ai.strgm.deck.exception.UnknownLeaseException;
+import ai.strgm.deck.exception.UnknownProfileException;
+import ai.strgm.deck.mapper.DeckApiMapper;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.jspecify.annotations.Nullable;
@@ -40,17 +48,16 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.core.exc.StreamReadException;
 
 /**
- * Every error DEALER returns has the documented OpenAI-style body, including the ones Spring MVC raises (an
- * unreadable body, a bad header, an unknown path, a wrong method) and unexpected failures, which become a 500.
+ * Every error DECK returns has the documented OpenAI-style body, including the ones Spring MVC raises (an unreadable
+ * body, a bad parameter, an unknown path, a wrong method) and unexpected failures, which become a 500.
  */
 @RestControllerAdvice
-public class Errors extends ResponseEntityExceptionHandler {
-    private static final Logger log = LoggerFactory.getLogger(Errors.class);
+public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
+    private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
 
-    private static ResponseEntity<Object> errorResponse(final HttpStatusCode status, final String type, final String message,
-            final @Nullable String param) {
+    static ResponseEntity<Object> errorResponse(final HttpStatusCode status, final String type, final String message, final @Nullable String param) {
         return ResponseEntity.status(status).contentType(APPLICATION_JSON)
-                .body(DealerApiMapper.errorResponse(message, type, param));
+                .body(DeckApiMapper.errorResponse(message, type, param));
     }
 
     private static ResponseEntity<Object> invalidRequest(final HttpStatusCode status, final String message, final @Nullable String param) {
@@ -64,26 +71,56 @@ public class Errors extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<Object> handle(final ApiException exception) {
-        return errorResponse(exception.status, exception.type, message(exception), exception.param);
+        return errorResponse(exception.status, exception.type, message(exception), null);
     }
 
-    @ExceptionHandler(ModelNotFoundException.class)
-    public ResponseEntity<Object> handle(final ModelNotFoundException exception) {
-        return errorResponse(NOT_FOUND, "model_not_found", message(exception), null);
+    @ExceptionHandler({UnknownProfileException.class, UnknownLeaseException.class})
+    public ResponseEntity<Object> handleUnknown(final RuntimeException exception) {
+        return errorResponse(NOT_FOUND, "not_found", message(exception), null);
     }
 
-    /** A request that couldn't get a ready lease, or whose DECK server couldn't be reached. */
-    @ExceptionHandler({LeaseUnavailableException.class, DeckUnreachableException.class})
-    public ResponseEntity<Object> handleUnavailable(final RuntimeException exception) {
-        return errorResponse(SERVICE_UNAVAILABLE, "server_error", message(exception), null);
+    @ExceptionHandler(LeaseInactiveException.class)
+    public ResponseEntity<Object> handle(final LeaseInactiveException exception) {
+        return errorResponse(CONFLICT, "lease_inactive", message(exception), null);
     }
 
-    /** DECK's own error, passed on with its status and body. */
-    @ExceptionHandler(DeckErrorException.class)
-    public ResponseEntity<Object> handle(final DeckErrorException exception) {
-        final var responseBody = exception.deckErrorBody().isBlank()
-                ? "{\"error\":{\"message\":\"DECK error " + exception.deckErrorStatus() + "\",\"type\":\"server_error\"}}" : exception.deckErrorBody();
-        return ResponseEntity.status(exception.deckErrorStatus()).contentType(APPLICATION_JSON).body(responseBody);
+    @ExceptionHandler(LeaseConflictException.class)
+    public ResponseEntity<Object> handle(final LeaseConflictException exception) {
+        return ResponseEntity.status(CONFLICT).contentType(APPLICATION_JSON)
+                .body(DeckApiMapper.leaseConflict(message(exception), "lease_conflict", exception.blockers()));
+    }
+
+    @ExceptionHandler(ProviderCredentialMissingException.class)
+    public ResponseEntity<Object> handle(final ProviderCredentialMissingException exception) {
+        return errorResponse(UNAUTHORIZED, "authentication_error",
+                "Missing X-Provider-Authorization: this DECK server forwards the provider credential it receives (D104)", null);
+    }
+
+    @ExceptionHandler(ProviderUnreachableException.class)
+    public ResponseEntity<Object> handle(final ProviderUnreachableException exception) {
+        return errorResponse(GATEWAY_TIMEOUT, "upstream_error", message(exception), null);
+    }
+
+    /** The provider's own error, passed on with its body and any Retry-After, under the status its reason maps to. */
+    @ExceptionHandler(ProviderErrorException.class)
+    public ResponseEntity<Object> handle(final ProviderErrorException exception) {
+        final var responseStatus = switch (exception.reason()) {
+            case RATE_LIMITED -> TOO_MANY_REQUESTS;
+            case CREDENTIAL_REJECTED -> UNAUTHORIZED;
+            case REQUEST_REJECTED -> BAD_REQUEST;
+            case UNAVAILABLE -> SERVICE_UNAVAILABLE;
+            case UNREADABLE -> BAD_GATEWAY;
+        };
+        if (exception.reason() == ProviderErrorException.Reason.UNREADABLE) {
+            return errorResponse(responseStatus, "upstream_error", message(exception), null);
+        }
+        final var responseBuilder = ResponseEntity.status(responseStatus).contentType(APPLICATION_JSON);
+        final var retryAfter = exception.retryAfter();
+        if (retryAfter != null) {
+            responseBuilder.header("Retry-After", retryAfter);
+        }
+        return responseBuilder.body(exception.providerErrorBody().isBlank()
+                ? "{\"error\":{\"message\":\"" + message(exception) + "\",\"type\":\"upstream_error\"}}" : exception.providerErrorBody());
     }
 
     /** A parameter outside its documented constraints, from method validation. */
@@ -177,6 +214,6 @@ public class Errors extends ResponseEntityExceptionHandler {
                 : exception instanceof ErrorResponse errorResponse ? errorResponse.getBody().getDetail() : null;
         final var message = detail != null ? detail : HttpStatus.valueOf(status.value()).getReasonPhrase();
         return ResponseEntity.status(status).headers(headers).contentType(APPLICATION_JSON)
-                .body(DealerApiMapper.errorResponse(message, type, null));
+                .body(DeckApiMapper.errorResponse(message, type, null));
     }
 }
