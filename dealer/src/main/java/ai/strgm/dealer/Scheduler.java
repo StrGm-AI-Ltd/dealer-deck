@@ -11,11 +11,9 @@ import static java.util.Comparator.reverseOrder;
 import ai.strgm.dealer.DealerProperties.ClientConfig;
 import ai.strgm.dealer.DeckRegistry.ModelProfileRef;
 import ai.strgm.deck.api.model.LeaseState;
-import ai.strgm.deck.api.model.ModelProfile;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.Priority;
-import ai.strgm.types.ProfileId;
 import ai.strgm.types.SessionId;
 import ai.strgm.types.SessionRef;
 import java.time.Duration;
@@ -87,12 +85,12 @@ public class Scheduler {
         if (virtualModelContextWindow.isPresent()) {
             final int minContextWindow = virtualModelContextWindow.getAsInt();
             final var localProfileRefs = allProfileRefs.stream()
-                    .filter(profileRef -> !profileRef.external() && profileRef.profile().getContextWindow() >= minContextWindow)
-                    .sorted(comparingInt(profileRef -> profileRef.profile().getContextWindow()))
+                    .filter(profileRef -> !profileRef.external() && profileRef.profile().contextWindow() >= minContextWindow)
+                    .sorted(comparingInt(profileRef -> profileRef.profile().contextWindow()))
                     .toList();
             final var externalProfileRefs = clientConfig.externalRouting()
                     ? allProfileRefs.stream()
-                            .filter(profileRef -> profileRef.external() && profileRef.profile().getContextWindow() >= minContextWindow)
+                            .filter(profileRef -> profileRef.external() && profileRef.profile().contextWindow() >= minContextWindow)
                             .toList()
                     : List.<ModelProfileRef>of();
             return Stream.concat(localProfileRefs.stream(), externalProfileRefs.stream())
@@ -100,7 +98,7 @@ public class Scheduler {
         }
         // a client may name a profile by its id as well as by its model
         return allProfileRefs.stream()
-                .filter(profileRef -> profileRef.profile().getId().value().equals(modelName.value()) || profileRef.profile().getModel().equals(modelName))
+                .filter(profileRef -> profileRef.profile().id().value().equals(modelName.value()) || profileRef.profile().modelName().equals(modelName))
                 .filter(profileRef -> !profileRef.external() || clientConfig.externalRouting())
                 .toList();
     }
@@ -231,7 +229,7 @@ public class Scheduler {
                 }
             }
             final var lease = decks.lease(placement.profileRef().serverRef(), placement.leaseId());
-            if (lease.getState() == LeaseState.READY) {
+            if (lease.state() == LeaseState.READY) {
                 synchronized (lock) {
                     placement.session().markReady(lease);
                 }
@@ -245,7 +243,7 @@ public class Scheduler {
     /** Called when a request's stream ends: accounts usage and applies a pending eviction. */
     public void release(final Placement placement, final long promptTokens, final long cachedTokens, final long completionTokens) {
         synchronized (lock) {
-            placement.session().endRequest(promptTokens, cachedTokens, completionTokens, placement.profileRef().profile().getPrices());
+            placement.session().endRequest(promptTokens, cachedTokens, completionTokens, placement.profileRef().profile().prices());
             if (placement.session().evictionDue()) {
                 evictNow(placement.session());
             }
@@ -276,19 +274,12 @@ public class Scheduler {
             if (reservedProfileRef.key().equals(candidate.key())) {
                 return true;
             }
-            if (reservedProfileRef.serverRef() == candidate.serverRef() && (reduces(reservedProfileRef.profile(), candidate.profile().getId())
-                    || reduces(candidate.profile(), reservedProfileRef.profile().getId()))) {
+            if (reservedProfileRef.serverRef() == candidate.serverRef() && (reservedProfileRef.profile().reduces(candidate.profile().id())
+                    || candidate.profile().reduces(reservedProfileRef.profile().id()))) {
                 return true;
             }
         }
         return false;
-    }
-
-    /** Whether a lease on {@code p} reduces the leases another profile on its server can grant. Any reduction counts. */
-    private static boolean reduces(final ModelProfile profile, final ProfileId otherId) {
-        return profile.getLimitations() != null && profile.getLimitations().getLeaseReductions() != null
-                && profile.getLimitations().getLeaseReductions().stream()
-                        .anyMatch(reduction -> reduction.getProfileId().equals(otherId));
     }
 
     /** Places every placeable lease request, in priority order, and starts evictions where client priority allows. */
@@ -325,7 +316,7 @@ public class Scheduler {
                         queue.remove();
                         reservations.values().removeIf(reservingLeaseRequest -> reservingLeaseRequest == leaseRequest);
                         leaseRequest.placement().complete(placement);
-                        log.info("Placed {} on {} ({})", session.ref(), candidate.key(), lease.getState().getValue());
+                        log.info("Placed {} on {} ({})", session.ref(), candidate.key(), lease.state().getValue());
                         placed = true;
                         break;
                     } catch (DeckRegistry.Blocked blocked) {
@@ -363,9 +354,9 @@ public class Scheduler {
                 continue;
             }
             evictions.addLast(new Eviction(Instant.ofEpochMilli(now), victim.clientConfig().name(), victim.id(), target.serverRef().name(),
-                    mapNullable(victim.heldLease(), victimLease -> victimLease.profileRef().profile().getId()),
+                    mapNullable(victim.heldLease(), victimLease -> victimLease.profileRef().profile().id()),
                     leaseRequest.session().clientConfig().name(),
-                    "priority " + leaseRequest.session().clientConfig().priority() + " > " + victim.clientConfig().priority() + " needs " + target.profile().getId()));
+                    "priority " + leaseRequest.session().clientConfig().priority() + " > " + victim.clientConfig().priority() + " needs " + target.profile().id()));
             while (evictions.size() > properties.evictionHistory()) {
                 evictions.removeFirst();
             }

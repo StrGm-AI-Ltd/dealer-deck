@@ -10,8 +10,10 @@ import static org.springframework.http.HttpStatus.OK;
 import ai.strgm.dealer.api.model.ServerType;
 import ai.strgm.deck.api.client.LeasesApi;
 import ai.strgm.deck.api.client.ModelProfilesApi;
+import ai.strgm.dealer.DeckProfile.TokenPrices;
 import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseConflict;
+import ai.strgm.deck.api.model.LeaseReduction;
 import ai.strgm.deck.api.model.LeaseRequest;
 import ai.strgm.deck.api.model.ModelProfile;
 import ai.strgm.types.LeaseId;
@@ -38,7 +40,10 @@ import org.springframework.web.client.support.RestClientAdapter;
 import org.springframework.web.service.invoker.HttpServiceProxyFactory;
 import tools.jackson.databind.ObjectMapper;
 
-/** The configured DECK servers, called only through the clients generated from the DECK OpenAPI document. */
+/**
+ * The configured DECK servers, called only through the clients generated from the DECK OpenAPI document. DECK's models
+ * stay here: the rest of DEALER sees them as {@link DeckProfile}s and {@link DeckLease}s.
+ */
 @Component
 public class DeckRegistry {
 
@@ -54,9 +59,9 @@ public class DeckRegistry {
         }
     }
 
-    public record ModelProfileRef(DeckServerRef serverRef, ModelProfile profile) {
+    public record ModelProfileRef(DeckServerRef serverRef, DeckProfile profile) {
         public String key() {
-            return serverRef.name() + "/" + profile.getId();
+            return serverRef.name() + "/" + profile.id();
         }
 
         public boolean external() {
@@ -107,7 +112,7 @@ public class DeckRegistry {
             try {
                 final var offeredProfiles = requireNonNull(serverRef.modelProfiles().getModelProfiles().getBody(),
                         "no model profiles in the response");
-                offeredProfiles.getProfiles().forEach(profile -> next.add(new ModelProfileRef(serverRef, profile)));
+                offeredProfiles.getProfiles().forEach(profile -> next.add(new ModelProfileRef(serverRef, deckProfile(profile))));
                 reachable.put(serverRef.name(), true);
             } catch (Exception exception) {
                 reachable.put(serverRef.name(), false);
@@ -117,6 +122,26 @@ public class DeckRegistry {
             }
         }
         profiles = List.copyOf(next);
+    }
+
+    private static DeckProfile deckProfile(final ModelProfile profile) {
+        final var prices = profile.getPrices();
+        final var limitations = profile.getLimitations();
+        final var leaseReductions = limitations == null || limitations.getLeaseReductions() == null ? List.<LeaseReduction>of()
+                : limitations.getLeaseReductions();
+        return new DeckProfile(profile.getId(), profile.getModel(), profile.getContextWindow(), prices == null ? TokenPrices.NONE
+                : new TokenPrices(orZero(prices.getInputPerMTok()), orZero(prices.getCachedInputPerMTok()), orZero(prices.getOutputPerMTok())),
+                leaseReductions.stream()
+                        .map(LeaseReduction::getProfileId)
+                        .toList());
+    }
+
+    private static double orZero(final @Nullable Double price) {
+        return price == null ? 0 : price;
+    }
+
+    private static DeckLease deckLease(final Lease lease) {
+        return new DeckLease(lease.getId(), lease.getState(), lease.getReadyAtMs());
     }
 
     public List<ModelProfileRef> profiles() {
@@ -131,10 +156,10 @@ public class DeckRegistry {
         return reachable.getOrDefault(serverName, false);
     }
 
-    public Lease acquire(final ModelProfileRef profileRef, final SessionRef sessionRef) throws Blocked {
+    public DeckLease acquire(final ModelProfileRef profileRef, final SessionRef sessionRef) throws Blocked {
         try {
-            return requireNonNull(profileRef.serverRef().leases().acquireLease(new LeaseRequest(profileRef.profile().getId(), sessionRef)).getBody(),
-                    "no lease in the response");
+            return deckLease(requireNonNull(profileRef.serverRef().leases().acquireLease(new LeaseRequest(profileRef.profile().id(), sessionRef)).getBody(),
+                    "no lease in the response"));
         } catch (HttpClientErrorException exception) {
             if (exception.getStatusCode().isSameCodeAs(CONFLICT)) {
                 throw new Blocked(mapper.readValue(exception.getResponseBodyAsString(), LeaseConflict.class).getBlockers());
@@ -143,8 +168,8 @@ public class DeckRegistry {
         }
     }
 
-    public Lease lease(final DeckServerRef serverRef, final LeaseId leaseId) {
-        return requireNonNull(serverRef.leases().getLease(leaseId).getBody(), "no lease in the response");
+    public DeckLease lease(final DeckServerRef serverRef, final LeaseId leaseId) {
+        return deckLease(requireNonNull(serverRef.leases().getLease(leaseId).getBody(), "no lease in the response"));
     }
 
     public void release(final DeckServerRef serverRef, final LeaseId leaseId) {

@@ -10,9 +10,8 @@ import ai.strgm.dealer.DeckRegistry.DeckServerRef;
 import ai.strgm.dealer.DeckRegistry.ModelProfileRef;
 import ai.strgm.dealer.Scheduler.Placement;
 import ai.strgm.dealer.api.model.SessionLeaseState;
-import ai.strgm.deck.api.model.Lease;
+import ai.strgm.dealer.DeckProfile.TokenPrices;
 import ai.strgm.deck.api.model.LeaseState;
-import ai.strgm.deck.api.model.Prices;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.SessionId;
@@ -115,43 +114,37 @@ final class Session {
     }
 
     /** Places the session's queued lease request on a lease DECK has just granted. */
-    Placement place(final LeaseRequest leaseRequest, final ModelProfileRef profileRef, final Lease grantedLease) {
+    Placement place(final LeaseRequest leaseRequest, final ModelProfileRef profileRef, final DeckLease grantedLease) {
         modelName = leaseRequest.modelName();
-        heldLease = new HeldLease(profileRef, grantedLease.getId());
-        if (grantedLease.getState() == LeaseState.READY) {
+        heldLease = new HeldLease(profileRef, grantedLease.id());
+        if (grantedLease.state() == LeaseState.READY) {
             markReady(grantedLease);
         } else {
-            leaseState = SessionLeaseState.fromValue(grantedLease.getState().getValue());
+            leaseState = SessionLeaseState.fromValue(grantedLease.state().getValue());
         }
         inFlight++;
         pendingLeaseRequest = null;
-        return new Placement(this, profileRef, grantedLease.getId());
+        return new Placement(this, profileRef, grantedLease.id());
     }
 
     boolean isReady() {
         return leaseState == SessionLeaseState.READY;
     }
 
-    void markReady(final Lease readyLease) {
+    void markReady(final DeckLease readyLease) {
         leaseState = SessionLeaseState.READY;
-        leaseReadyAt = readyLease.getReadyAtMs() == null ? currentTimeMillis() : readyLease.getReadyAtMs();
+        leaseReadyAt = readyLease.readyAtMs() == null ? currentTimeMillis() : readyLease.readyAtMs();
     }
 
     /** Ends a request on the session's lease: undoes its in-flight count and adds its usage. */
-    void endRequest(final long promptTokens, final long cachedTokens, final long completionTokens, final @Nullable Prices prices) {
+    void endRequest(final long promptTokens, final long cachedTokens, final long completionTokens, final TokenPrices prices) {
         inFlight = max(0, inFlight - 1);
         lastActivity = currentTimeMillis();
         this.promptTokens += promptTokens;
         this.cachedTokens += cachedTokens;
         this.completionTokens += completionTokens;
-        if (prices != null) {
-            costUsd += ((promptTokens - cachedTokens) * orZero(prices.getInputPerMTok()) + cachedTokens * orZero(prices.getCachedInputPerMTok())
-                    + completionTokens * orZero(prices.getOutputPerMTok())) / TOKENS_PER_MILLION;
-        }
-    }
-
-    private static double orZero(final @Nullable Double price) {
-        return price == null ? 0 : price;
+        costUsd += ((promptTokens - cachedTokens) * prices.inputPerMTok() + cachedTokens * prices.cachedInputPerMTok()
+                + completionTokens * prices.outputPerMTok()) / TOKENS_PER_MILLION;
     }
 
     int inFlight() {
@@ -209,7 +202,7 @@ final class Session {
         return new SessionSnapshot(clientConfig.name(), id, modelName,
                 mapNullable(heldLease, currentLease -> currentLease.profileRef().serverRef().name()),
                 mapNullable(heldLease, currentLease -> currentLease.profileRef().serverRef().config().egress()),
-                mapNullable(heldLease, currentLease -> currentLease.profileRef().profile().getId()),
+                mapNullable(heldLease, currentLease -> currentLease.profileRef().profile().id()),
                 mapNullable(heldLease, HeldLease::id),
                 leaseState, heldLease == null || leaseReadyAt == 0 ? null : now - leaseReadyAt, inFlight > 0 ? 0L : now - lastActivity,
                 inFlight, evictPending, requests, promptTokens, cachedTokens, completionTokens, costUsd);

@@ -43,7 +43,7 @@ public final class ChatStream {
 
     /** The model profile serving the completion. */
     public ProfileId profileId() {
-        return placement.profileRef().profile().getId();
+        return placement.profileRef().profile().id();
     }
 
     /** Copies DECK's events to {@code out} until DECK ends the stream, then ends the request on its lease. */

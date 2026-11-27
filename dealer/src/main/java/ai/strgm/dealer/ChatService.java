@@ -37,7 +37,7 @@ public class ChatService {
         }
         final var placement = scheduler.acquire(clientConfig, sessionId, modelName, priority);
         final var upstreamRequest = (ObjectNode) request.deepCopy();
-        upstreamRequest.put("model", placement.profileRef().profile().getModel().value());
+        upstreamRequest.put("model", placement.profileRef().profile().modelName().value());
         final var clientWantsUsage = request.path("stream_options").path("include_usage").isBoolean()
                 && request.path("stream_options").path("include_usage").booleanValue();
         upstreamRequest.putObject("stream_options").put("include_usage", true);

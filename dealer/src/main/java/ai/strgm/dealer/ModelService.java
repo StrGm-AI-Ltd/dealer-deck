@@ -21,9 +21,9 @@ public class ModelService {
         }
         // TODO(#62): list only the profiles the requesting client may use, not every profile for every client
         // a profile is listed by its id, which clients may request as a model name
-        decks.profiles().forEach(profileRef -> models.add(new ListedModel(new ModelName(profileRef.profile().getId().value()),
+        decks.profiles().forEach(profileRef -> models.add(new ListedModel(new ModelName(profileRef.profile().id().value()),
                 profileRef.serverRef().name().value(), profileRef.serverRef().name(), profileRef.serverRef().config().egress(),
-                profileRef.profile().getContextWindow(), false)));
+                profileRef.profile().contextWindow(), false)));
         return models;
     }
 }
