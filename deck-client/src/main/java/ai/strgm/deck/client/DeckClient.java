@@ -13,6 +13,7 @@ import ai.strgm.deck.api.model.LeaseConflict;
 import ai.strgm.deck.api.model.LeaseReduction;
 import ai.strgm.deck.api.model.LeaseRequest;
 import ai.strgm.deck.api.model.ModelProfile;
+import ai.strgm.deck.api.model.Worker;
 import ai.strgm.deck.client.config.DeckEndpoint;
 import ai.strgm.deck.client.config.DeckTimeouts;
 import ai.strgm.deck.client.exception.DeckConnectionException;
@@ -21,12 +22,17 @@ import ai.strgm.deck.client.exception.DeckResponseException;
 import ai.strgm.deck.client.model.DeckLease;
 import ai.strgm.deck.client.model.DeckProfile;
 import ai.strgm.deck.client.model.DeckProfile.TokenPrices;
+import ai.strgm.deck.client.model.DeckProfileState;
+import ai.strgm.deck.client.model.DeckProfileState.Reduction;
+import ai.strgm.deck.client.model.DeckServerState;
+import ai.strgm.deck.client.model.DeckWorker;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.ProfileId;
 import ai.strgm.types.SessionRef;
 import ai.strgm.util.AuthorizationHeaders;
 import java.net.http.HttpClient;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.function.Supplier;
@@ -140,9 +146,27 @@ public final class DeckClient {
         call(() -> leasesApi.evictLease(leaseId));
     }
 
-    /** The server's state: its profiles, workers and recent leases. */
-    public DeckState state() {
-        return call(() -> requireNonNull(metricsApi.getDeckState().getBody(), "no state in the response"));
+    /** The server's state: what it is, what it has spent, and its profiles and workers. */
+    public DeckServerState state() {
+        final DeckState deckState = call(() -> requireNonNull(metricsApi.getDeckState().getBody(), "no state in the response"));
+        final var workers = deckState.getWorkers() == null ? List.<Worker>of() : deckState.getWorkers();
+        return new DeckServerState(deckState.getImplementation(), deckState.getProvider(), orZero(deckState.getSpendUsd()),
+                deckState.getProfiles().stream()
+                        .map(DeckClient::deckProfileState)
+                        .toList(),
+                workers.stream()
+                        .map(worker -> new DeckWorker(worker.getId(), worker.getLoadedProfile(), worker.getState()))
+                        .toList());
+    }
+
+    private static DeckProfileState deckProfileState(final ModelProfile profile) {
+        final var leaseReductions = profile.getLimitations() == null || profile.getLimitations().getLeaseReductions() == null
+                ? List.<LeaseReduction>of() : profile.getLimitations().getLeaseReductions();
+        return new DeckProfileState(profile.getId(), profile.getContextWindow(), profile.getReadiness(),
+                mapNullable(profile.getLoadingTimeMs(), loadingTimeMs -> Duration.ofMillis(loadingTimeMs)), profile.getActiveLeases() == null ? 0 : profile.getActiveLeases(),
+                profile.getMaxLeases(), leaseReductions.stream()
+                        .map(reduction -> new Reduction(reduction.getProfileId(), reduction.getLeases()))
+                        .toList());
     }
 
     /**
