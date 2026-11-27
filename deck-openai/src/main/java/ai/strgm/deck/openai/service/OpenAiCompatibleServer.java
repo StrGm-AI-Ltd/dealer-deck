@@ -23,18 +23,16 @@ import ai.strgm.deck.exception.UnknownProfileException;
 import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.deck.api.model.Readiness;
 import ai.strgm.deck.openai.config.UpstreamProperties.UpstreamModel;
+import ai.strgm.deck.openai.model.ProviderChatEvent;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.ProfileId;
 import ai.strgm.types.SessionRef;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
 import java.util.List;
 import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.node.ObjectNode;
 
 /**
  * The DECK server backed by an OpenAI-compatible provider, configured under {@code deck.upstream}: Nebius Token
@@ -47,8 +45,6 @@ import tools.jackson.databind.node.ObjectNode;
 public class OpenAiCompatibleServer extends AbstractDeckServer {
     /** Prices are per million tokens. */
     private static final double TOKENS_PER_MILLION = 1_000_000.0;
-    /** The prefix of a server-sent event's data line. */
-    private static final String SSE_DATA_PREFIX = "data:";
 
     private final ProviderClient providerClient;
     private final UpstreamProperties upstreamProperties;
@@ -126,38 +122,21 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
         }
         final var leaseRecord = activeLeaseRecord(leaseId);
         final var upstreamModel = upstreamModelFor(leaseRecord.profileId());
-        final var upstreamBody = (ObjectNode) chatRequest.deepCopy();
-        upstreamBody.put("model", upstreamModel.model().value());
-        upstreamBody.put("stream", true);
-        upstreamBody.putObject("stream_options").put("include_usage", true);
-        final var providerEvents = providerClient.openChatStream(providerAuthorization, upstreamBody.toString());
+        final var providerEvents = providerClient.openChatStream(providerAuthorization, upstreamModel.model(), chatRequest);
         final var promptTokens = Json.promptTokens(chatRequest);
         final ChatStream chatStream = out -> {
             boolean sawUsage = false;
             long completionChars = 0;
-            try (var reader = new BufferedReader(new InputStreamReader(providerEvents, UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (line.startsWith(SSE_DATA_PREFIX)) {
-                        final var eventData = line.substring(SSE_DATA_PREFIX.length()).trim();
-                        if (!eventData.equals("[DONE]") && eventData.startsWith("{")) {
-                            final var chunk = mapper.readTree(eventData);
-                            final var usage = chunk.path("usage");
-                            if (usage.isObject()) {
-                                sawUsage = true;
-                                addUsage(leaseRecord, Json.number(usage.path("prompt_tokens")),
-                                        Json.number(usage.path("prompt_tokens_details").path("cached_tokens")),
-                                        Json.number(usage.path("completion_tokens")), false);
-                            }
-                            completionChars += chunk.path("choices").valueStream()
-                                    .mapToLong(choice -> Json.text(choice.path("delta").path("content")).length())
-                                    .sum();
-                        }
+            try (providerEvents) {
+                ProviderChatEvent event;
+                while ((event = providerEvents.nextEvent()) != null) {
+                    if (event.usage() != null) {
+                        sawUsage = true;
+                        addUsage(leaseRecord, event.usage().promptTokens(), event.usage().cachedTokens(), event.usage().completionTokens(), false);
                     }
-                    out.write((line + "\n").getBytes(UTF_8));
-                    if (line.isEmpty()) {
-                        out.flush();
-                    }
+                    completionChars += event.contentChars();
+                    out.write(event.text().getBytes(UTF_8));
+                    out.flush();
                 }
             } finally {
                 if (!sawUsage) {
