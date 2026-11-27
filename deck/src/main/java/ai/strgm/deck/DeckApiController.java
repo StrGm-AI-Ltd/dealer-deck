@@ -33,8 +33,8 @@ public class DeckApiController implements ModelProfilesApi, LeasesApi, MetricsAp
     @Override
     public ResponseEntity<Lease> acquireLease(final LeaseRequest leaseRequest) {
         final var acquired = server.acquire(leaseRequest.getProfileId(), leaseRequest.getSessionRef());
-        final var lease = acquired.lease();
-        return acquired.created() ? ResponseEntity.created(URI.create("/leases/" + lease.getId())).body(lease) : ResponseEntity.ok(lease);
+        return acquired.created() ? ResponseEntity.created(URI.create("/leases/" + acquired.lease().getId())).body(acquired.lease())
+                : ResponseEntity.ok(acquired.lease());
     }
 
     @Override

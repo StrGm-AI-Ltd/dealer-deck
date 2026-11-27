@@ -188,8 +188,7 @@ public class DashboardView extends VerticalLayout {
 
     /** A profile's lease reductions, e.g. {@code large −1}, or {@code -} if it has none. */
     private static String leaseReductions(final ModelProfile profile) {
-        final var limitations = profile.getLimitations();
-        final var reductions = limitations == null ? null : limitations.getLeaseReductions();
+        final var reductions = profile.getLimitations() == null ? null : profile.getLimitations().getLeaseReductions();
         if (reductions == null || reductions.isEmpty()) {
             return "-";
         }

@@ -50,8 +50,7 @@ public class Errors extends ResponseEntityExceptionHandler {
 
     /** An exception's message, or its class name when it has none. */
     private static String message(final Throwable exception) {
-        final var message = exception.getMessage();
-        return message != null ? message : exception.getClass().getSimpleName();
+        return exception.getMessage() != null ? exception.getMessage() : exception.getClass().getSimpleName();
     }
 
     @ExceptionHandler(UpstreamException.class)

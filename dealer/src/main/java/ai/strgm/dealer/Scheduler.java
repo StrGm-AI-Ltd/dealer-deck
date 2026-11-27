@@ -181,8 +181,7 @@ public class Scheduler {
             cancel(leaseRequest);
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", "Interrupted while queued");
         } catch (ExecutionException exception) {
-            final var cause = exception.getCause();
-            final var reason = cause == null ? null : cause.getMessage();
+            final var reason = exception.getCause() == null ? null : exception.getCause().getMessage();
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", reason != null ? reason : "The request couldn't be placed");
         }
     }
@@ -213,18 +212,17 @@ public class Scheduler {
 
     /** Waits for the placement's lease to be ready, asking DECK until the session knows it is. */
     private void awaitReady(final Placement placement) {
-        final var session = placement.session();
         final var deadline = currentTimeMillis() + Duration.ofSeconds(properties.timers().readinessTimeoutSeconds()).toMillis();
         while (currentTimeMillis() < deadline) {
             synchronized (lock) {
-                if (session.isReady()) {
+                if (placement.session().isReady()) {
                     return;
                 }
             }
             final var lease = decks.lease(placement.profile().server(), placement.leaseId());
             if (lease.getState() == LeaseState.READY) {
                 synchronized (lock) {
-                    session.markReady(lease);
+                    placement.session().markReady(lease);
                 }
                 return;
             }
@@ -236,10 +234,9 @@ public class Scheduler {
     /** Called when a request's stream ends: accounts usage and applies a pending eviction. */
     public void release(final Placement placement, final long prompt, final long cached, final long completion) {
         synchronized (lock) {
-            final var session = placement.session();
-            session.endRequest(prompt, cached, completion, placement.profile().profile().getPrices());
-            if (session.evictionDue()) {
-                evictNow(session);
+            placement.session().endRequest(prompt, cached, completion, placement.profile().profile().getPrices());
+            if (placement.session().evictionDue()) {
+                evictNow(placement.session());
             }
         }
         dispatch();
@@ -353,9 +350,8 @@ public class Scheduler {
             if (!victim.markEvicting(now, minLeaseMs)) {
                 continue;
             }
-            final var victimLease = victim.lease();
             evictions.addLast(new EvictionEvent().createdAt(Instant.ofEpochMilli(now).getEpochSecond()).victimClient(victim.client().name()).victimSession(victim.id())
-                    .deckServer(target.server().name()).profileId(victimLease == null ? null : victimLease.profile().profile().getId()).byClient(leaseRequest.session().client().name())
+                    .deckServer(target.server().name()).profileId(victim.lease() == null ? null : victim.lease().profile().profile().getId()).byClient(leaseRequest.session().client().name())
                     .reason("priority " + leaseRequest.session().client().priority() + " > " + victim.client().priority() + " needs " + target.profile().getId()));
             while (evictions.size() > properties.evictionHistory()) {
                 evictions.removeFirst();
