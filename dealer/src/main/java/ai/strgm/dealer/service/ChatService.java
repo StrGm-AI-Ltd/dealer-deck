@@ -26,7 +26,7 @@ public class ChatService {
      * {@link ModelNotFoundException} when no profile serves the model for the client, and the scheduler's and DECK's
      * exceptions before streaming starts.
      */
-    public ChatRelay openStream(final ClientConfig clientConfig, final SessionId sessionId, final ModelName modelName, final Priority priority,
+    public ChatRelay openChatStream(final ClientConfig clientConfig, final SessionId sessionId, final ModelName modelName, final Priority priority,
             final JsonNode chatRequest) {
         // TODO(#62): say which DECK servers and model profiles the client may use, instead of its external-routing flag
         if (scheduler.candidateProfiles(clientConfig, modelName).isEmpty()) {

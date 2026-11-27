@@ -76,7 +76,7 @@ public class ChatController {
         if (requestedModel.isBlank()) {
             throw new ApiException(BAD_REQUEST, "invalid_request_error", "Missing \"model\"");
         }
-        final var chatRelay = chatService.openStream(clientConfig, sessionId, new ModelName(requestedModel), priority, chatRequest);
+        final var chatRelay = chatService.openChatStream(clientConfig, sessionId, new ModelName(requestedModel), priority, chatRequest);
         final StreamingResponseBody responseBody = chatRelay::relayTo;
         return ResponseEntity.ok().contentType(TEXT_EVENT_STREAM)
                 .header("X-Dealer-Server", chatRelay.serverName().value())
