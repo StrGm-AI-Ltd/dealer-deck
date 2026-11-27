@@ -6,6 +6,7 @@ import static java.util.stream.Collectors.joining;
 import static org.springframework.http.HttpStatus.BAD_REQUEST;
 import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
 import static org.springframework.http.HttpStatus.NOT_FOUND;
+import static org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 
 import ai.strgm.dealer.api.model.ErrorBody;
@@ -59,12 +60,26 @@ public class Errors extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<Object> handle(final ApiException exception) {
-        final var rawBody = exception.body;
-        if (rawBody != null) {
-            return ResponseEntity.status(exception.status).contentType(APPLICATION_JSON).body(rawBody);
-        }
-        final var type = exception.type;
-        return of(exception.status, type != null ? type : "server_error", message(exception), exception.param);
+        return of(exception.status, exception.type, message(exception), exception.param);
+    }
+
+    @ExceptionHandler(ModelNotFoundException.class)
+    public ResponseEntity<Object> handle(final ModelNotFoundException exception) {
+        return of(NOT_FOUND, "model_not_found", message(exception), null);
+    }
+
+    /** A request that couldn't get a ready lease, or whose DECK server couldn't be reached. */
+    @ExceptionHandler({LeaseUnavailableException.class, DeckUnreachableException.class})
+    public ResponseEntity<Object> handleUnavailable(final RuntimeException exception) {
+        return of(SERVICE_UNAVAILABLE, "server_error", message(exception), null);
+    }
+
+    /** DECK's own error, passed on with its status and body. */
+    @ExceptionHandler(DeckErrorException.class)
+    public ResponseEntity<Object> handle(final DeckErrorException exception) {
+        final var body = exception.deckBody.isBlank()
+                ? "{\"error\":{\"message\":\"DECK error " + exception.deckStatus + "\",\"type\":\"server_error\"}}" : exception.deckBody;
+        return ResponseEntity.status(exception.deckStatus).contentType(APPLICATION_JSON).body(body);
     }
 
     /** A parameter outside its documented constraints, from method validation. */

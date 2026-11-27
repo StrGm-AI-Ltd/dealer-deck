@@ -7,7 +7,6 @@ import static java.lang.Thread.currentThread;
 import static java.util.Comparator.comparing;
 import static java.util.Comparator.comparingInt;
 import static java.util.Comparator.reverseOrder;
-import static org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
 
 import ai.strgm.dealer.DealerProperties.ClientConfig;
 import ai.strgm.dealer.DeckRegistry.ModelProfileRef;
@@ -194,10 +193,10 @@ public class Scheduler {
         } catch (InterruptedException exception) {
             currentThread().interrupt();
             cancel(leaseRequest);
-            throw new ApiException(SERVICE_UNAVAILABLE, "server_error", "Interrupted while queued");
+            throw new LeaseUnavailableException("Interrupted while queued");
         } catch (ExecutionException exception) {
             final var reason = mapNullable(exception.getCause(), Throwable::getMessage);
-            throw new ApiException(SERVICE_UNAVAILABLE, "server_error", reason != null ? reason : "The request couldn't be placed");
+            throw new LeaseUnavailableException(reason != null ? reason : "The request couldn't be placed");
         }
     }
 
@@ -209,7 +208,7 @@ public class Scheduler {
             // it was cancelled: the next attempt decides what this request does
         } catch (InterruptedException exception) {
             currentThread().interrupt();
-            throw new ApiException(SERVICE_UNAVAILABLE, "server_error", "Interrupted while queued");
+            throw new LeaseUnavailableException("Interrupted while queued");
         }
     }
 
@@ -243,7 +242,7 @@ public class Scheduler {
             }
             sleep(properties.timers().readinessPollMillis());
         }
-        throw new ApiException(SERVICE_UNAVAILABLE, "server_error", "Lease " + placement.leaseId() + " never became ready");
+        throw new LeaseUnavailableException("Lease " + placement.leaseId() + " never became ready");
     }
 
     /** Called when a request's stream ends: accounts usage and applies a pending eviction. */

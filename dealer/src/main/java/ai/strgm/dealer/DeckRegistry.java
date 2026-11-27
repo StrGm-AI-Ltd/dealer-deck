@@ -1,8 +1,11 @@
 package ai.strgm.dealer;
 
 import static ai.strgm.util.Nulls.mapNullable;
+import static java.lang.Thread.currentThread;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 import static org.springframework.http.HttpStatus.CONFLICT;
+import static org.springframework.http.HttpStatus.OK;
 
 import ai.strgm.dealer.api.model.ServerType;
 import ai.strgm.deck.api.client.LeasesApi;
@@ -14,6 +17,11 @@ import ai.strgm.deck.api.model.ModelProfile;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ServerName;
 import ai.strgm.types.SessionRef;
+import java.io.InputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -69,10 +77,15 @@ public class DeckRegistry {
     private final Map<ServerName, DeckServerRef> servers = new LinkedHashMap<>();
     private final Map<ServerName, Boolean> reachable = new ConcurrentHashMap<>();
     private final ObjectMapper mapper;
+    private final HttpClient chatClient;
+    /** How long one chat completion may take, streaming included. */
+    private final Duration chatRequestTimeout;
     private volatile List<ModelProfileRef> profiles = List.of();
 
     public DeckRegistry(final DealerProperties properties, final ObjectMapper mapper) {
         this.mapper = mapper;
+        this.chatClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(properties.timeouts().chatConnectSeconds())).build();
+        this.chatRequestTimeout = Duration.ofMinutes(properties.timeouts().chatRequestMinutes());
         for (final var serverConfig : properties.servers()) {
             final var requests = new SimpleClientHttpRequestFactory();
             requests.setConnectTimeout(Duration.ofSeconds(properties.timeouts().deckConnectSeconds()));
@@ -140,6 +153,42 @@ public class DeckRegistry {
         } catch (Exception ignored) {
             // the lease may already be gone
         }
+    }
+
+    /**
+     * Opens a streamed chat completion on {@code serverRef}, on lease {@code leaseId}, and returns its server-sent
+     * events. Throws {@link DeckUnreachableException} when the server can't be reached, and {@link DeckErrorException}
+     * when it refuses the request.
+     */
+    public InputStream openChat(final DeckServerRef serverRef, final LeaseId leaseId, final String requestBody) {
+        final var request = HttpRequest.newBuilder(URI.create(serverRef.config().url() + "/v1/chat/completions"))
+                .header("Authorization", "Bearer " + serverRef.config().key())
+                .header("X-Lease-Id", leaseId.value())
+                .header("Content-Type", "application/json")
+                .timeout(chatRequestTimeout)
+                .POST(HttpRequest.BodyPublishers.ofString(requestBody));
+        if (serverRef.providerAuthorization() != null) {
+            request.header("X-Provider-Authorization", serverRef.providerAuthorization());
+        }
+        final HttpResponse<InputStream> response;
+        try {
+            response = chatClient.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
+        } catch (Exception exception) {
+            if (exception instanceof InterruptedException) {
+                currentThread().interrupt();
+            }
+            throw new DeckUnreachableException("DECK server " + serverRef.name() + " unreachable");
+        }
+        if (response.statusCode() != OK.value()) {
+            String text;
+            try (var responseBody = response.body()) {
+                text = new String(responseBody.readAllBytes(), UTF_8);
+            } catch (Exception exception) {
+                text = "";
+            }
+            throw new DeckErrorException(response.statusCode(), text);
+        }
+        return response.body();
     }
 
     public void evict(final DeckServerRef serverRef, final LeaseId leaseId) {
