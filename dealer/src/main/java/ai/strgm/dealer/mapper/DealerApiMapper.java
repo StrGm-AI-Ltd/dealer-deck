@@ -1,5 +1,7 @@
 package ai.strgm.dealer.mapper;
 
+import static ai.strgm.util.Nulls.mapNullable;
+
 import ai.strgm.dealer.config.DealerProperties.ClientConfig;
 import ai.strgm.dealer.model.DealerSnapshot;
 import ai.strgm.dealer.model.DealerSnapshot.ServerStatus;
@@ -15,6 +17,8 @@ import ai.strgm.dealer.model.Eviction;
 import ai.strgm.dealer.model.LeaseRequestSnapshot;
 import ai.strgm.dealer.model.ListedModel;
 import ai.strgm.dealer.model.SessionSnapshot;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 
 /** Maps DEALER's domain objects to the models generated from the DEALER OpenAPI document (D144). */
@@ -22,10 +26,10 @@ public final class DealerApiMapper {
     private DealerApiMapper() {
     }
 
-    /** {@code createdAt}: every model's {@code created}, in epoch seconds. */
-    public static ModelList modelList(final List<ListedModel> listedModels, final long createdAt) {
+    /** {@code createdAt}: every model's {@code created}. */
+    public static ModelList modelList(final List<ListedModel> listedModels, final Instant createdAt) {
         final var models = listedModels.stream()
-                .map(listedModel -> new Model(listedModel.modelName(), "model", createdAt, listedModel.ownedBy())
+                .map(listedModel -> new Model(listedModel.modelName(), "model", createdAt.getEpochSecond(), listedModel.ownedBy())
                         .deckServer(listedModel.deckServer()).serverType(listedModel.serverType())
                         .contextWindow(listedModel.contextWindow()).virtual(listedModel.virtual()))
                 .toList();
@@ -64,13 +68,14 @@ public final class DealerApiMapper {
     private static QueuedRequest queuedRequest(final LeaseRequestSnapshot leaseRequest) {
         return new QueuedRequest().client(leaseRequest.clientName()).sessionId(leaseRequest.sessionId()).model(leaseRequest.modelName())
                 .clientPriority(leaseRequest.clientPriority()).requestPriority(leaseRequest.requestPriority())
-                .waitingMs(leaseRequest.waitingMs()).reservedProfile(leaseRequest.reservedProfile());
+                .waitingMs(leaseRequest.waiting().toMillis()).reservedProfile(leaseRequest.reservedProfile());
     }
 
     private static SessionInfo sessionInfo(final SessionSnapshot session) {
         return new SessionInfo().client(session.clientName()).sessionId(session.sessionId()).model(session.modelName())
                 .deckServer(session.deckServer()).serverType(session.serverType()).profileId(session.profileId()).leaseId(session.leaseId())
-                .leaseState(session.leaseState()).leaseAgeMs(session.leaseAgeMs()).idleMs(session.idleMs()).inFlight(session.inFlight())
+                .leaseState(session.leaseState()).leaseAgeMs(mapNullable(session.leaseAge(), Duration::toMillis))
+                .idleMs(session.idle().toMillis()).inFlight(session.inFlight())
                 .evictPending(session.evictPending()).requests(session.requests()).promptTokens(session.promptTokens())
                 .cachedTokens(session.cachedTokens()).completionTokens(session.completionTokens()).costUsd(session.costUsd());
     }

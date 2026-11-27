@@ -13,6 +13,7 @@ import ai.strgm.deck.api.model.Quantization;
 import ai.strgm.deck.api.model.SpeedPoint;
 import ai.strgm.deck.api.model.Usage;
 import ai.strgm.deck.api.model.Worker;
+import java.time.Instant;
 import ai.strgm.deck.model.LeaseSnapshot;
 import ai.strgm.deck.model.OfferedProfile;
 import ai.strgm.deck.model.OfferedProfiles;
@@ -30,8 +31,8 @@ public final class DeckApiMapper {
     }
 
     public static Lease lease(final LeaseSnapshot lease) {
-        return new Lease(lease.id(), lease.profileId(), lease.state()).sessionRef(lease.sessionRef()).createdAtMs(lease.createdAtMs())
-                .readyAtMs(lease.readyAtMs())
+        return new Lease(lease.id(), lease.profileId(), lease.state()).sessionRef(lease.sessionRef()).createdAtMs(lease.createdAt().toEpochMilli())
+                .readyAtMs(mapNullable(lease.readyAt(), Instant::toEpochMilli))
                 .usage(new Usage().promptTokens(lease.usage().promptTokens()).cachedTokens(lease.usage().cachedTokens())
                         .completionTokens(lease.usage().completionTokens()).estimated(lease.usage().estimated()));
     }

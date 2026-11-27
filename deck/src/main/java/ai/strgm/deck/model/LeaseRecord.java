@@ -1,6 +1,5 @@
 package ai.strgm.deck.model;
 
-import static java.lang.System.currentTimeMillis;
 import static java.util.UUID.randomUUID;
 
 import ai.strgm.deck.model.LeaseSnapshot.TokenUsage;
@@ -8,6 +7,7 @@ import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ProfileId;
 import ai.strgm.types.SessionRef;
+import java.time.Instant;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 
@@ -22,9 +22,9 @@ public final class LeaseRecord {
     private final LeaseId id = new LeaseId("lease-" + randomUUID().toString().substring(0, ID_LENGTH));
     private final ProfileId profileId;
     private final SessionRef sessionRef;
-    private final long createdAt = currentTimeMillis();
+    private final Instant createdAt = Instant.now();
     private LeaseState state;
-    private @Nullable Long readyAt;
+    private @Nullable Instant readyAt;
     private long promptTokens;
     private long cachedTokens;
     private long completionTokens;
@@ -62,7 +62,7 @@ public final class LeaseRecord {
     /** A loading lease becomes ready; a lease released or evicted while it loaded stays so. */
     public void markReady() {
         if (state == LeaseState.LOADING) {
-            readyAt = currentTimeMillis();
+            readyAt = Instant.now();
             state = LeaseState.READY;
         }
     }

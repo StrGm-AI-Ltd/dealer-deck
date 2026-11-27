@@ -4,6 +4,7 @@ import ai.strgm.types.ClientName;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.Priority;
 import ai.strgm.types.SessionId;
+import java.time.Duration;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -11,4 +12,4 @@ import org.jspecify.annotations.Nullable;
  * drained for it ({@code server/profile}), if any.
  */
 public record LeaseRequestSnapshot(ClientName clientName, SessionId sessionId, ModelName modelName, Priority clientPriority,
-        Priority requestPriority, long waitingMs, @Nullable String reservedProfile) {}
+        Priority requestPriority, Duration waiting, @Nullable String reservedProfile) {}

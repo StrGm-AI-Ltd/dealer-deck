@@ -18,7 +18,7 @@ public class DealerApiController implements ModelsApi, MetricsApi {
     private final StateService stateService;
     // every model's `created`: DEALER's start time (this controller is created once, at startup), as no model has
     // a creation date of its own
-    private final long startedAt = Instant.now().getEpochSecond();
+    private final Instant startedAt = Instant.now();
 
     public DealerApiController(final ModelService modelService, final StateService stateService) {
         this.modelService = modelService;

@@ -32,6 +32,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -127,7 +128,7 @@ public class DeckRegistry {
     }
 
     private static DeckLease deckLease(final Lease lease) {
-        return new DeckLease(lease.getId(), lease.getState(), lease.getReadyAtMs());
+        return new DeckLease(lease.getId(), lease.getState(), mapNullable(lease.getReadyAtMs(), Instant::ofEpochMilli));
     }
 
     public List<ModelProfileRef> profiles() {

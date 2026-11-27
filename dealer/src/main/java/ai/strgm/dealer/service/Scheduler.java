@@ -2,7 +2,6 @@ package ai.strgm.dealer.service;
 
 import static ai.strgm.util.Nulls.mapNullable;
 import static java.lang.Integer.parseInt;
-import static java.lang.System.currentTimeMillis;
 import static java.lang.Thread.currentThread;
 import static java.util.Comparator.comparing;
 import static java.util.Comparator.comparingInt;
@@ -230,8 +229,8 @@ public class Scheduler {
 
     /** Waits for the placement's lease to be ready, asking DECK until the session knows it is. */
     private void awaitReady(final Placement placement) {
-        final var deadline = currentTimeMillis() + Duration.ofSeconds(properties.timers().readinessTimeoutSeconds()).toMillis();
-        while (currentTimeMillis() < deadline) {
+        final var deadline = Instant.now().plus(Duration.ofSeconds(properties.timers().readinessTimeoutSeconds()));
+        while (Instant.now().isBefore(deadline)) {
             synchronized (lock) {
                 if (placement.session().isReady()) {
                     return;
@@ -356,13 +355,13 @@ public class Scheduler {
             victims.add(leaseHolder.get());
         }
         reservations.putIfAbsent(target.key(), leaseRequest);
-        final var now = currentTimeMillis();
-        final var minLeaseMs = Duration.ofSeconds(properties.timers().minLeaseSeconds()).toMillis();
+        final var now = Instant.now();
+        final var minLease = Duration.ofSeconds(properties.timers().minLeaseSeconds());
         for (final var victim : victims) {
-            if (!victim.markEvicting(now, minLeaseMs)) {
+            if (!victim.markEvicting(now, minLease)) {
                 continue;
             }
-            evictions.addLast(new Eviction(Instant.ofEpochMilli(now), victim.clientConfig().name(), victim.id(), target.serverRef().name(),
+            evictions.addLast(new Eviction(now, victim.clientConfig().name(), victim.id(), target.serverRef().name(),
                     mapNullable(victim.heldLease(), victimLease -> victimLease.profileRef().profile().id()),
                     leaseRequest.session().clientConfig().name(),
                     "priority " + leaseRequest.session().clientConfig().priority() + " > " + victim.clientConfig().priority() + " needs " + target.profile().id()));
@@ -380,10 +379,10 @@ public class Scheduler {
     @Scheduled(fixedDelayString = "${dealer.timers.tick-millis}")
     public void tick() {
         synchronized (lock) {
-            final var idleMs = Duration.ofSeconds(properties.timers().idleSeconds()).toMillis();
-            final var now = currentTimeMillis();
+            final var idle = Duration.ofSeconds(properties.timers().idleSeconds());
+            final var now = Instant.now();
             for (final var session : sessions.values()) {
-                final var releasedLease = session.clearLeaseIfIdle(now, idleMs);
+                final var releasedLease = session.clearLeaseIfIdle(now, idle);
                 if (releasedLease != null) {
                     decks.releaseLease(releasedLease.profileRef().serverRef(), releasedLease.id());
                     log.info("Released idle lease of {} on {}", session.ref(), releasedLease.profileRef().key());
@@ -395,11 +394,11 @@ public class Scheduler {
 
     public List<LeaseRequestSnapshot> queuedLeaseRequests() {
         synchronized (lock) {
-            final var now = currentTimeMillis();
+            final var now = Instant.now();
             return leaseRequests.stream()
                     .map(leaseRequest -> new LeaseRequestSnapshot(leaseRequest.session().clientConfig().name(), leaseRequest.session().id(),
                             leaseRequest.modelName(), leaseRequest.session().clientConfig().priority(), leaseRequest.requestPriority(),
-                            now - leaseRequest.enqueuedAt(), reservedProfile(leaseRequest)))
+                            Duration.between(leaseRequest.enqueuedAt(), now), reservedProfile(leaseRequest)))
                     .toList();
         }
     }
@@ -415,7 +414,7 @@ public class Scheduler {
 
     public List<SessionSnapshot> sessions() {
         synchronized (lock) {
-            final var now = currentTimeMillis();
+            final var now = Instant.now();
             return sessions.values().stream()
                     .map(session -> session.snapshot(now))
                     .toList();

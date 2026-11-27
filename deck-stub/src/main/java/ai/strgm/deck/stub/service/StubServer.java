@@ -3,7 +3,6 @@ package ai.strgm.deck.stub.service;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static java.lang.Math.round;
-import static java.lang.System.currentTimeMillis;
 import static java.lang.Thread.currentThread;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -207,16 +206,17 @@ public class StubServer extends AbstractDeckServer {
         final var promptTokens = Json.promptTokens(chatRequest);
         final var speed = speedAt(profileDef, promptTokens);
         final ChatStream chatStream = out -> {
-            final var deadline = currentTimeMillis() + Duration.ofSeconds(stubProperties.loadingWaitSeconds()).toMillis();
-            while (isLoading(leaseRecord) && currentTimeMillis() < deadline) {
+            final var deadline = Instant.now().plus(Duration.ofSeconds(stubProperties.loadingWaitSeconds()));
+            while (isLoading(leaseRecord) && Instant.now().isBefore(deadline)) {
                 sleep(stubProperties.loadingPollMillis());
             }
             sleep(scaled(profileDef.ttftMs()) + round(promptTokens * MILLIS_PER_SECOND / speed.prefillTps() * stubProperties.timeFactor()));
             final var id = "chatcmpl-" + leaseRecord.id();
-            final var createdAt = Instant.now().getEpochSecond();
+            final var createdAt = Instant.now();
             for (int tokenIndex = 0; tokenIndex < maxTokens; tokenIndex++) {
                 final var contentChunk = mapper.createObjectNode();
-                contentChunk.put("id", id).put("object", "chat.completion.chunk").put("created", createdAt).put("model", profileDef.model().value());
+                contentChunk.put("id", id).put("object", "chat.completion.chunk").put("created", createdAt.getEpochSecond())
+                        .put("model", profileDef.model().value());
                 final var choice = contentChunk.putArray("choices").addObject();
                 choice.put("index", 0);
                 final var delta = choice.putObject("delta");
@@ -229,7 +229,8 @@ public class StubServer extends AbstractDeckServer {
                 sleep(round(MILLIS_PER_SECOND / speed.decodeTps() * stubProperties.timeFactor()));
             }
             final var finishChunk = mapper.createObjectNode();
-            finishChunk.put("id", id).put("object", "chat.completion.chunk").put("created", createdAt).put("model", profileDef.model().value());
+            finishChunk.put("id", id).put("object", "chat.completion.chunk").put("created", createdAt.getEpochSecond())
+                    .put("model", profileDef.model().value());
             final var choice = finishChunk.putArray("choices").addObject();
             choice.put("index", 0);
             choice.putObject("delta");
@@ -237,7 +238,8 @@ public class StubServer extends AbstractDeckServer {
             writeEvent(out, finishChunk.toString());
             if (includeUsage) {
                 final var usageChunk = mapper.createObjectNode();
-                usageChunk.put("id", id).put("object", "chat.completion.chunk").put("created", createdAt).put("model", profileDef.model().value());
+                usageChunk.put("id", id).put("object", "chat.completion.chunk").put("created", createdAt.getEpochSecond())
+                        .put("model", profileDef.model().value());
                 usageChunk.putArray("choices");
                 final var usage = usageChunk.putObject("usage");
                 usage.put("prompt_tokens", promptTokens).put("completion_tokens", maxTokens).put("total_tokens", promptTokens + maxTokens);
