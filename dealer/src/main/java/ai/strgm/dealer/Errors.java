@@ -59,9 +59,9 @@ public class Errors extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<Object> handle(final ApiException exception) {
-        final var raw = exception.body;
-        if (raw != null) {
-            return ResponseEntity.status(exception.status).contentType(APPLICATION_JSON).body(raw);
+        final var rawBody = exception.body;
+        if (rawBody != null) {
+            return ResponseEntity.status(exception.status).contentType(APPLICATION_JSON).body(rawBody);
         }
         final var type = exception.type;
         return of(exception.status, type != null ? type : "server_error", message(exception), exception.param);
@@ -70,13 +70,13 @@ public class Errors extends ResponseEntityExceptionHandler {
     /** A parameter outside its documented constraints, from method validation. */
     @ExceptionHandler(ConstraintViolationException.class)
     public ResponseEntity<Object> handle(final ConstraintViolationException exception) {
-        final var first = exception.getConstraintViolations().stream()
+        final var firstPropertyPath = exception.getConstraintViolations().stream()
                 .map(violation -> violation.getPropertyPath().toString())
                 .sorted()
                 .findFirst()
                 .orElse(null);
         return invalid(BAD_REQUEST, "Invalid request: " + exception.getMessage(),
-                Nulls.map(first, propertyPath -> propertyPath.substring(propertyPath.lastIndexOf('.') + 1)));
+                Nulls.map(firstPropertyPath, propertyPath -> propertyPath.substring(propertyPath.lastIndexOf('.') + 1)));
     }
 
     /** Anything else: a 500, without the exception's details, which are logged. */
@@ -103,15 +103,15 @@ public class Errors extends ResponseEntityExceptionHandler {
 
     /** Where in the body the value Jackson couldn't read is, e.g. {@code messages[0].role}; null if Jackson didn't say. */
     private static @Nullable String field(final JacksonException exception) {
-        final var path = new StringBuilder();
+        final var fieldPath = new StringBuilder();
         for (final var reference : exception.getPath()) {
             if (reference.getPropertyName() != null) {
-                path.append(path.isEmpty() ? "" : ".").append(reference.getPropertyName());
+                fieldPath.append(fieldPath.isEmpty() ? "" : ".").append(reference.getPropertyName());
             } else if (reference.getIndex() >= 0) {
-                path.append('[').append(reference.getIndex()).append(']');
+                fieldPath.append('[').append(reference.getIndex()).append(']');
             }
         }
-        return path.isEmpty() ? null : path.toString();
+        return fieldPath.isEmpty() ? null : fieldPath.toString();
     }
 
     @Override
@@ -129,8 +129,9 @@ public class Errors extends ResponseEntityExceptionHandler {
     @Override
     protected ResponseEntity<Object> handleTypeMismatch(final TypeMismatchException exception, final HttpHeaders headers,
             final HttpStatusCode status, final WebRequest request) {
-        final var name = exception instanceof MethodArgumentTypeMismatchException mismatch ? mismatch.getName() : exception.getPropertyName();
-        return invalid(status, "Invalid value for " + name + ": " + exception.getValue(), name);
+        final var parameterName = exception instanceof MethodArgumentTypeMismatchException mismatch ? mismatch.getName()
+                : exception.getPropertyName();
+        return invalid(status, "Invalid value for " + parameterName + ": " + exception.getValue(), parameterName);
     }
 
     @Override

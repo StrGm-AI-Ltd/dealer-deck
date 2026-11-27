@@ -32,17 +32,17 @@ public class DealerApiController implements ModelsApi, MetricsApi {
 
     @Override
     public ResponseEntity<ModelList> listModels() {
-        final List<Model> data = new ArrayList<>();
+        final List<Model> models = new ArrayList<>();
         for (final var tier : AutoTier.ALL) {
-            data.add(new Model(tier.modelName(), "model", startedAt, "dealer").contextWindow(tier.contextWindow()).virtual(true));
+            models.add(new Model(tier.modelName(), "model", startedAt, "dealer").contextWindow(tier.contextWindow()).virtual(true));
         }
         // TODO(#62): list only the profiles the requesting client may use, not every profile for every client
         // a profile is listed by its id, which clients may request as a model name
-        decks.profiles().forEach(profileRef -> data.add(new Model(new ModelName(profileRef.profile().getId().value()), "model", startedAt,
+        decks.profiles().forEach(profileRef -> models.add(new Model(new ModelName(profileRef.profile().getId().value()), "model", startedAt,
                 profileRef.serverRef().name().value()).deckServer(profileRef.serverRef().name())
                 .serverType(profileRef.serverRef().config().egress())
                 .contextWindow(profileRef.profile().getContextWindow()).virtual(false)));
-        return ResponseEntity.ok(new ModelList("list", data));
+        return ResponseEntity.ok(new ModelList("list", models));
     }
 
     @Override

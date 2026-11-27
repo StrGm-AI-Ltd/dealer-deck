@@ -59,17 +59,17 @@ public class ChatController {
     }
 
     @PostMapping("/v1/chat/completions")
-    public ResponseEntity<StreamingResponseBody> chat(@RequestBody final String raw,
+    public ResponseEntity<StreamingResponseBody> chat(@RequestBody final String rawBody,
             @RequestHeader(value = "X-Session-Id", required = false) final @Nullable String sessionId,
             @RequestHeader(value = "X-Request-Priority", required = false) final @Nullable Integer requestPriority,
             final HttpServletRequest servletRequest) {
-        final var clientConfig = (ClientConfig) servletRequest.getAttribute(AuthFilter.CLIENT);
+        final var clientConfig = (ClientConfig) servletRequest.getAttribute(AuthFilter.CLIENT_CONFIG_ATTRIBUTE);
         if (clientConfig == null) {
             throw new ApiException(UNAUTHORIZED, "authentication_error", "A client API key is required");
         }
         final JsonNode body;
         try {
-            body = mapper.readTree(raw);
+            body = mapper.readTree(rawBody);
         } catch (JacksonException exception) {
             throw new ApiException(BAD_REQUEST, "invalid_request_error", "The request body isn't valid JSON");
         }
@@ -97,17 +97,17 @@ public class ChatController {
         final var priority = requestPriority == null ? Priorities.DEFAULT_REQUEST : requestPriority;
         final var placement = scheduler.acquire(clientConfig, new SessionId(sessionId), modelName, priority);
         final var serverRef = placement.profileRef().serverRef();
-        final var forward = (ObjectNode) body.deepCopy();
-        forward.put("model", placement.profileRef().profile().getModel().value());
+        final var upstreamBody = (ObjectNode) body.deepCopy();
+        upstreamBody.put("model", placement.profileRef().profile().getModel().value());
         final var clientWantsUsage = body.path("stream_options").path("include_usage").isBoolean()
                 && body.path("stream_options").path("include_usage").booleanValue();
-        forward.putObject("stream_options").put("include_usage", true);
+        upstreamBody.putObject("stream_options").put("include_usage", true);
         final var request = HttpRequest.newBuilder(URI.create(serverRef.config().url() + "/v1/chat/completions"))
                 .header("Authorization", "Bearer " + serverRef.config().key())
                 .header("X-Lease-Id", placement.leaseId().value())
                 .header("Content-Type", "application/json")
                 .timeout(requestTimeout)
-                .POST(HttpRequest.BodyPublishers.ofString(forward.toString()));
+                .POST(HttpRequest.BodyPublishers.ofString(upstreamBody.toString()));
         if (serverRef.providerAuthorization() != null) {
             request.header("X-Provider-Authorization", serverRef.providerAuthorization());
         }
@@ -133,22 +133,22 @@ public class ChatController {
                     ? "{\"error\":{\"message\":\"DECK error " + response.statusCode() + "\",\"type\":\"server_error\"}}" : text);
         }
         final StreamingResponseBody stream = out -> {
-            long prompt = 0;
-            long cached = 0;
-            long completion = 0;
+            long promptTokens = 0;
+            long cachedTokens = 0;
+            long completionTokens = 0;
             boolean skipBlank = false;
             try (var reader = new BufferedReader(new InputStreamReader(response.body(), UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     if (line.startsWith(SSE_DATA_PREFIX)) {
-                        final var data = line.substring(SSE_DATA_PREFIX.length()).trim();
-                        if (data.startsWith("{")) {
-                            final var chunk = mapper.readTree(data);
+                        final var eventData = line.substring(SSE_DATA_PREFIX.length()).trim();
+                        if (eventData.startsWith("{")) {
+                            final var chunk = mapper.readTree(eventData);
                             final var usage = chunk.path("usage");
                             if (usage.isObject()) {
-                                prompt = number(usage.path("prompt_tokens"));
-                                cached = number(usage.path("prompt_tokens_details").path("cached_tokens"));
-                                completion = number(usage.path("completion_tokens"));
+                                promptTokens = number(usage.path("prompt_tokens"));
+                                cachedTokens = number(usage.path("prompt_tokens_details").path("cached_tokens"));
+                                completionTokens = number(usage.path("completion_tokens"));
                                 // Nebius attaches usage to every chunk: only a usage-only chunk (no choices) is the
                                 // one the client didn't ask for, so a chunk that carries text is always forwarded
                                 if (!clientWantsUsage && chunk.path("choices").isEmpty()) {
@@ -168,7 +168,7 @@ public class ChatController {
                     }
                 }
             } finally {
-                scheduler.release(placement, prompt, cached, completion);
+                scheduler.release(placement, promptTokens, cachedTokens, completionTokens);
             }
         };
         return ResponseEntity.ok().contentType(TEXT_EVENT_STREAM)

@@ -14,7 +14,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @Component
 public class AuthFilter extends OncePerRequestFilter {
     private static final String BEARER_PREFIX = "Bearer ";
-    static final String CLIENT = "dealer.client";
+    static final String CLIENT_CONFIG_ATTRIBUTE = "dealer.client";
     private final DealerProperties properties;
 
     public AuthFilter(final DealerProperties properties) {
@@ -32,14 +32,14 @@ public class AuthFilter extends OncePerRequestFilter {
     protected void doFilterInternal(final HttpServletRequest request, final HttpServletResponse response,
             final FilterChain chain) throws ServletException, IOException {
         final var header = request.getHeader("Authorization");
-        final var key = header != null && header.startsWith(BEARER_PREFIX) ? header.substring(BEARER_PREFIX.length()) : "";
+        final var apiKey = header != null && header.startsWith(BEARER_PREFIX) ? header.substring(BEARER_PREFIX.length()) : "";
         final var clientConfig = properties.clients().stream()
-                .filter(candidate -> candidate.key().equals(key))
+                .filter(candidate -> candidate.key().equals(apiKey))
                 .findFirst();
         if (clientConfig.isPresent()) {
-            request.setAttribute(CLIENT, clientConfig.get());
+            request.setAttribute(CLIENT_CONFIG_ATTRIBUTE, clientConfig.get());
             chain.doFilter(request, response);
-        } else if (key.equals(properties.metricsKey()) && request.getRequestURI().startsWith("/metrics")) {
+        } else if (apiKey.equals(properties.metricsKey()) && request.getRequestURI().startsWith("/metrics")) {
             chain.doFilter(request, response);
         } else {
             response.setStatus(UNAUTHORIZED.value());

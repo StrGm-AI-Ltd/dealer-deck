@@ -116,38 +116,38 @@ final class Session {
     }
 
     /** Places the session's queued lease request on a lease DECK has just granted. */
-    Placement place(final LeaseRequest leaseRequest, final ModelProfileRef profile, final Lease granted) {
+    Placement place(final LeaseRequest leaseRequest, final ModelProfileRef profileRef, final Lease grantedLease) {
         modelName = leaseRequest.modelName();
-        heldLease = new HeldLease(profile, granted.getId());
-        if (granted.getState() == LeaseState.READY) {
-            markReady(granted);
+        heldLease = new HeldLease(profileRef, grantedLease.getId());
+        if (grantedLease.getState() == LeaseState.READY) {
+            markReady(grantedLease);
         } else {
-            leaseState = SessionLeaseState.fromValue(granted.getState().getValue());
+            leaseState = SessionLeaseState.fromValue(grantedLease.getState().getValue());
         }
         inFlight++;
         pendingLeaseRequest = null;
-        return new Placement(this, profile, granted.getId());
+        return new Placement(this, profileRef, grantedLease.getId());
     }
 
     boolean isReady() {
         return leaseState == SessionLeaseState.READY;
     }
 
-    void markReady(final Lease ready) {
+    void markReady(final Lease readyLease) {
         leaseState = SessionLeaseState.READY;
-        leaseReadyAt = ready.getReadyAtMs() == null ? currentTimeMillis() : ready.getReadyAtMs();
+        leaseReadyAt = readyLease.getReadyAtMs() == null ? currentTimeMillis() : readyLease.getReadyAtMs();
     }
 
     /** Ends a request on the session's lease: undoes its in-flight count and adds its usage. */
-    void endRequest(final long prompt, final long cached, final long completion, final @Nullable Prices prices) {
+    void endRequest(final long promptTokens, final long cachedTokens, final long completionTokens, final @Nullable Prices prices) {
         inFlight = max(0, inFlight - 1);
         lastActivity = currentTimeMillis();
-        promptTokens += prompt;
-        cachedTokens += cached;
-        completionTokens += completion;
+        this.promptTokens += promptTokens;
+        this.cachedTokens += cachedTokens;
+        this.completionTokens += completionTokens;
         if (prices != null) {
-            costUsd += ((prompt - cached) * orZero(prices.getInputPerMTok()) + cached * orZero(prices.getCachedInputPerMTok())
-                    + completion * orZero(prices.getOutputPerMTok())) / TOKENS_PER_MILLION;
+            costUsd += ((promptTokens - cachedTokens) * orZero(prices.getInputPerMTok()) + cachedTokens * orZero(prices.getCachedInputPerMTok())
+                    + completionTokens * orZero(prices.getOutputPerMTok())) / TOKENS_PER_MILLION;
         }
     }
 
@@ -196,20 +196,21 @@ final class Session {
     }
 
     private @Nullable HeldLease clearLease(final SessionLeaseState state) {
-        final var cleared = heldLease;
-        if (cleared != null) {
+        final var clearedLease = heldLease;
+        if (clearedLease != null) {
             heldLease = null;
             evictPending = false;
             leaseState = state;
         }
-        return cleared;
+        return clearedLease;
     }
 
     SessionInfo toInfo(final long now) {
         return new SessionInfo().client(clientConfig.name()).sessionId(id).model(modelName)
-                .deckServer(Nulls.map(heldLease, held -> held.profileRef().serverRef().name()))
-                .serverType(Nulls.map(heldLease, held -> held.profileRef().serverRef().config().egress()))
-                .profileId(Nulls.map(heldLease, held -> held.profileRef().profile().getId())).leaseId(Nulls.map(heldLease, HeldLease::id))
+                .deckServer(Nulls.map(heldLease, currentLease -> currentLease.profileRef().serverRef().name()))
+                .serverType(Nulls.map(heldLease, currentLease -> currentLease.profileRef().serverRef().config().egress()))
+                .profileId(Nulls.map(heldLease, currentLease -> currentLease.profileRef().profile().getId()))
+                .leaseId(Nulls.map(heldLease, HeldLease::id))
                 .leaseState(leaseState).leaseAgeMs(heldLease == null || leaseReadyAt == 0 ? null : now - leaseReadyAt)
                 .idleMs(inFlight > 0 ? 0L : now - lastActivity).inFlight(inFlight).evictPending(evictPending)
                 .requests(requests).promptTokens(promptTokens).cachedTokens(cachedTokens)

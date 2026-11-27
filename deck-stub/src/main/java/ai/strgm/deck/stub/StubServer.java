@@ -78,19 +78,19 @@ public class StubServer extends AbstractDeckServer {
             + "focused functions, name things for what they do, test the behaviour rather than the implementation, "
             + "and keep side effects at the edges of the system so the core stays easy to reason about.").split(" ");
 
-    private final StubProperties stub;
+    private final StubProperties stubProperties;
     private final Map<String, String> loaded = new LinkedHashMap<>(Map.of("w1", "small-a", "w2", "small-b"));
 
-    public StubServer(final DeckProperties properties, final StubProperties stub, final ObjectMapper mapper) {
+    public StubServer(final DeckProperties properties, final StubProperties stubProperties, final ObjectMapper mapper) {
         super(properties, mapper);
-        this.stub = stub;
+        this.stubProperties = stubProperties;
         loaded.clear();
         loaded.put("w1", "small-a");
         loaded.put("w2", "small-b");
     }
 
     private long scaled(final long millis) {
-        return round(millis * stub.timeFactor());
+        return round(millis * stubProperties.timeFactor());
     }
 
     private ProfileDef profileDefFor(final ProfileId id) {
@@ -107,20 +107,22 @@ public class StubServer extends AbstractDeckServer {
 
     /** The profile's speeds at {@code contextTokens}: linear between the two nearest points, clamped outside them. */
     private static Speed speedAt(final ProfileDef profileDef, final long contextTokens) {
-        final var points = profileDef.speeds();
-        if (contextTokens <= points.getFirst().contextTokens()) {
-            return points.getFirst();
+        final var speedPoints = profileDef.speeds();
+        if (contextTokens <= speedPoints.getFirst().contextTokens()) {
+            return speedPoints.getFirst();
         }
-        for (int pointIndex = 1; pointIndex < points.size(); pointIndex++) {
-            final var upper = points.get(pointIndex);
-            if (contextTokens <= upper.contextTokens()) {
-                final var lower = points.get(pointIndex - 1);
-                final var fraction = (double) (contextTokens - lower.contextTokens()) / (upper.contextTokens() - lower.contextTokens());
-                return new Speed((int) contextTokens, lower.prefillTps() + fraction * (upper.prefillTps() - lower.prefillTps()),
-                        lower.decodeTps() + fraction * (upper.decodeTps() - lower.decodeTps()));
+        for (int pointIndex = 1; pointIndex < speedPoints.size(); pointIndex++) {
+            final var upperPoint = speedPoints.get(pointIndex);
+            if (contextTokens <= upperPoint.contextTokens()) {
+                final var lowerPoint = speedPoints.get(pointIndex - 1);
+                final var fractionBetweenPoints = (double) (contextTokens - lowerPoint.contextTokens())
+                        / (upperPoint.contextTokens() - lowerPoint.contextTokens());
+                return new Speed((int) contextTokens,
+                        lowerPoint.prefillTps() + fractionBetweenPoints * (upperPoint.prefillTps() - lowerPoint.prefillTps()),
+                        lowerPoint.decodeTps() + fractionBetweenPoints * (upperPoint.decodeTps() - lowerPoint.decodeTps()));
             }
         }
-        return points.getLast();
+        return speedPoints.getLast();
     }
 
     private ModelProfile toApi(final ProfileDef profileDef) {
@@ -139,10 +141,10 @@ public class StubServer extends AbstractDeckServer {
                 .quantization(new Quantization(profileDef.quantization()).bitsPerWeight(profileDef.bitsPerWeight()))
                 .limitations(new Limitations().leaseReductions(reductions))
                 .prices(new Prices().inputPerMTok(0.0).cachedInputPerMTok(0.0).outputPerMTok(0.0))
-                .maxLeases(LEASES_PER_PROFILE).activeLeases(active(profileDef.id()).size())
+                .maxLeases(LEASES_PER_PROFILE).activeLeases(activeLeaseIds(profileDef.id()).size())
                 .speeds(profileDef.speeds().stream()
                         .map(point -> new SpeedPoint(point.contextTokens(),
-                                point.prefillTps() / stub.timeFactor(), point.decodeTps() / stub.timeFactor()))
+                                point.prefillTps() / stubProperties.timeFactor(), point.decodeTps() / stubProperties.timeFactor()))
                         .toList());
     }
 
@@ -185,18 +187,18 @@ public class StubServer extends AbstractDeckServer {
     public DeckState state() {
         final List<Worker> workers;
         synchronized (lock) {
-            final var active = activeRecords();
+            final var activeLeaseRecords = activeRecords();
             workers = loaded.entrySet().stream()
                     .map(worker -> {
-                        final var busy = active.stream()
+                        final var isLeased = activeLeaseRecords.stream()
                                 .anyMatch(leaseRecord -> profileDefFor(leaseRecord.profileId()).workers().contains(worker.getKey()));
                         return new Worker().id(worker.getKey()).loadedProfile(worker.getValue())
                                 .state(worker.getValue().startsWith(LOADING_PREFIX) ? WorkerState.LOADING
-                                        : busy ? WorkerState.LEASED : WorkerState.IDLE);
+                                        : isLeased ? WorkerState.LEASED : WorkerState.IDLE);
                     })
                     .toList();
         }
-        return new DeckState(properties.serverName(), Implementation.STUB, modelProfiles().getProfiles(), recent())
+        return new DeckState(properties.serverName(), Implementation.STUB, modelProfiles().getProfiles(), recentLeases())
                 .workers(workers).spendUsd(0.0);
     }
 
@@ -207,20 +209,20 @@ public class StubServer extends AbstractDeckServer {
         final var maxTokens = (int) max(1, min(Json.number(request.path("max_tokens")) == 0 ? DEFAULT_MAX_TOKENS
                 : Json.number(request.path("max_tokens")), WORDS.length));
         final var includeUsage = Json.bool(request.path("stream_options").path("include_usage"));
-        final var prompt = Json.promptTokens(request);
-        final var speed = speedAt(profileDef, prompt);
+        final var promptTokens = Json.promptTokens(request);
+        final var speed = speedAt(profileDef, promptTokens);
         final StreamingResponseBody body = out -> {
-            final var deadline = currentTimeMillis() + Duration.ofSeconds(stub.loadingWaitSeconds()).toMillis();
+            final var deadline = currentTimeMillis() + Duration.ofSeconds(stubProperties.loadingWaitSeconds()).toMillis();
             while (isLoading(leaseRecord) && currentTimeMillis() < deadline) {
-                sleep(stub.loadingPollMillis());
+                sleep(stubProperties.loadingPollMillis());
             }
-            sleep(scaled(profileDef.ttftMs()) + round(prompt * MILLIS_PER_SECOND / speed.prefillTps() * stub.timeFactor()));
+            sleep(scaled(profileDef.ttftMs()) + round(promptTokens * MILLIS_PER_SECOND / speed.prefillTps() * stubProperties.timeFactor()));
             final var id = "chatcmpl-" + leaseRecord.id();
-            final var created = Instant.now().getEpochSecond();
+            final var createdAt = Instant.now().getEpochSecond();
             for (int tokenIndex = 0; tokenIndex < maxTokens; tokenIndex++) {
-                final var chunk = mapper.createObjectNode();
-                chunk.put("id", id).put("object", "chat.completion.chunk").put("created", created).put("model", profileDef.model().value());
-                final var choice = chunk.putArray("choices").addObject();
+                final var contentChunk = mapper.createObjectNode();
+                contentChunk.put("id", id).put("object", "chat.completion.chunk").put("created", createdAt).put("model", profileDef.model().value());
+                final var choice = contentChunk.putArray("choices").addObject();
                 choice.put("index", 0);
                 final var delta = choice.putObject("delta");
                 if (tokenIndex == 0) {
@@ -228,26 +230,26 @@ public class StubServer extends AbstractDeckServer {
                 }
                 delta.put("content", WORDS[tokenIndex] + " ");
                 choice.putNull("finish_reason");
-                write(out, chunk.toString());
-                sleep(round(MILLIS_PER_SECOND / speed.decodeTps() * stub.timeFactor()));
+                write(out, contentChunk.toString());
+                sleep(round(MILLIS_PER_SECOND / speed.decodeTps() * stubProperties.timeFactor()));
             }
-            final var last = mapper.createObjectNode();
-            last.put("id", id).put("object", "chat.completion.chunk").put("created", created).put("model", profileDef.model().value());
-            final var choice = last.putArray("choices").addObject();
+            final var finishChunk = mapper.createObjectNode();
+            finishChunk.put("id", id).put("object", "chat.completion.chunk").put("created", createdAt).put("model", profileDef.model().value());
+            final var choice = finishChunk.putArray("choices").addObject();
             choice.put("index", 0);
             choice.putObject("delta");
             choice.put("finish_reason", "stop");
-            write(out, last.toString());
+            write(out, finishChunk.toString());
             if (includeUsage) {
-                final var usage = mapper.createObjectNode();
-                usage.put("id", id).put("object", "chat.completion.chunk").put("created", created).put("model", profileDef.model().value());
-                usage.putArray("choices");
-                final var counts = usage.putObject("usage");
-                counts.put("prompt_tokens", prompt).put("completion_tokens", maxTokens).put("total_tokens", prompt + maxTokens);
-                counts.putObject("prompt_tokens_details").put("cached_tokens", 0);
-                write(out, usage.toString());
+                final var usageChunk = mapper.createObjectNode();
+                usageChunk.put("id", id).put("object", "chat.completion.chunk").put("created", createdAt).put("model", profileDef.model().value());
+                usageChunk.putArray("choices");
+                final var usage = usageChunk.putObject("usage");
+                usage.put("prompt_tokens", promptTokens).put("completion_tokens", maxTokens).put("total_tokens", promptTokens + maxTokens);
+                usage.putObject("prompt_tokens_details").put("cached_tokens", 0);
+                write(out, usageChunk.toString());
             }
-            addUsage(leaseRecord, prompt, 0, maxTokens, false);
+            addUsage(leaseRecord, promptTokens, 0, maxTokens, false);
             out.write("data: [DONE]\n\n".getBytes(UTF_8));
             out.flush();
         };

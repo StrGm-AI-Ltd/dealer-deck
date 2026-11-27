@@ -68,17 +68,17 @@ public final class LeaseRecord {
         }
     }
 
-    /** Ends an active lease as {@code ended} (released or evicted); an inactive one stays as it is. */
-    void end(final LeaseState ended) {
+    /** Ends an active lease as {@code endState} (released or evicted); an inactive one stays as it is. */
+    void end(final LeaseState endState) {
         if (active()) {
-            state = ended;
+            state = endState;
         }
     }
 
-    void addUsage(final long prompt, final long cached, final long completion, final boolean usageEstimated) {
-        promptTokens += prompt;
-        cachedTokens += cached;
-        completionTokens += completion;
+    void addUsage(final long promptTokens, final long cachedTokens, final long completionTokens, final boolean usageEstimated) {
+        this.promptTokens += promptTokens;
+        this.cachedTokens += cachedTokens;
+        this.completionTokens += completionTokens;
         estimated |= usageEstimated;
     }
 

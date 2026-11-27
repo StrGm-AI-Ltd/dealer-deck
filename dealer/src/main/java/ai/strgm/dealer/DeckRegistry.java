@@ -92,8 +92,9 @@ public class DeckRegistry {
         final List<ModelProfileRef> next = new ArrayList<>();
         for (final var serverRef : servers.values()) {
             try {
-                final var offered = requireNonNull(serverRef.modelProfiles().getModelProfiles().getBody(), "no model profiles in the response");
-                offered.getProfiles().forEach(profile -> next.add(new ModelProfileRef(serverRef, profile)));
+                final var offeredProfiles = requireNonNull(serverRef.modelProfiles().getModelProfiles().getBody(),
+                        "no model profiles in the response");
+                offeredProfiles.getProfiles().forEach(profile -> next.add(new ModelProfileRef(serverRef, profile)));
                 reachable.put(serverRef.name(), true);
             } catch (Exception exception) {
                 reachable.put(serverRef.name(), false);

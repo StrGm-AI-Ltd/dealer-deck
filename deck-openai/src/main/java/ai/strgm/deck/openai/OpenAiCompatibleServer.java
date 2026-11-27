@@ -65,19 +65,19 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
     private static final String SSE_DATA_PREFIX = "data:";
 
     private final HttpClient http;
-    private final UpstreamProperties upstream;
+    private final UpstreamProperties upstreamProperties;
     private final String prefix;
 
-    public OpenAiCompatibleServer(final DeckProperties properties, final UpstreamProperties upstream,
+    public OpenAiCompatibleServer(final DeckProperties properties, final UpstreamProperties upstreamProperties,
             final ObjectMapper mapper) {
         super(properties, mapper);
-        this.upstream = upstream;
-        this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(upstream.connectTimeoutSeconds())).build();
-        this.prefix = upstream.idPrefix() == null ? upstream.provider() + "/" : upstream.idPrefix();
+        this.upstreamProperties = upstreamProperties;
+        this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(upstreamProperties.connectTimeoutSeconds())).build();
+        this.prefix = upstreamProperties.idPrefix() == null ? upstreamProperties.provider() + "/" : upstreamProperties.idPrefix();
     }
 
     private UpstreamModel model(final ProfileId profileId) {
-        return upstream.models().stream()
+        return upstreamProperties.models().stream()
                 .filter(upstreamModel -> profileId(upstreamModel).equals(profileId))
                 .findFirst()
                 .orElseThrow(() -> unknownProfile(profileId));
@@ -89,11 +89,11 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
     }
 
     private List<ModelProfile> profiles() {
-        return upstream.models().stream()
+        return upstreamProperties.models().stream()
                 .map(upstreamModel -> new ModelProfile(profileId(upstreamModel), new ModelName(prefix + upstreamModel.model()),
-                        upstreamModel.contextWindow(), Readiness.LOADED).provider(upstream.provider()).limitations(new Limitations())
+                        upstreamModel.contextWindow(), Readiness.LOADED).provider(upstreamProperties.provider()).limitations(new Limitations())
                         .quantization(Nulls.map(upstreamModel.quantization(), quantization -> new Quantization(quantization).bitsPerWeight(upstreamModel.bitsPerWeight())))
-                        .maxLeases(upstreamModel.maxLeases()).activeLeases(active(profileId(upstreamModel)).size())
+                        .maxLeases(upstreamModel.maxLeases()).activeLeases(activeLeaseIds(profileId(upstreamModel)).size())
                         .prices(new Prices().inputPerMTok(upstreamModel.inputPerMTok())
                                 .cachedInputPerMTok(upstreamModel.cachedInputPerMTok()).outputPerMTok(upstreamModel.outputPerMTok())))
                 .toList();
@@ -101,16 +101,16 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
 
     @Override
     public ModelProfiles modelProfiles() {
-        return new ModelProfiles(properties.serverName(), upstream.implementation(), profiles());
+        return new ModelProfiles(properties.serverName(), upstreamProperties.implementation(), profiles());
     }
 
     @Override
     protected LeaseRecord grant(final ProfileId profileId, final SessionRef sessionRef) {
         final var upstreamModel = model(profileId);
-        final var active = active(profileId);
-        if (upstreamModel.maxLeases() != null && active.size() >= upstreamModel.maxLeases()) {
+        final var activeLeaseIds = activeLeaseIds(profileId);
+        if (upstreamModel.maxLeases() != null && activeLeaseIds.size() >= upstreamModel.maxLeases()) {
             throw new ApiException(CONFLICT, "lease_conflict",
-                    "The instance budget of " + profileId + " (" + upstreamModel.maxLeases() + ") is in use", active);
+                    "The instance budget of " + profileId + " (" + upstreamModel.maxLeases() + ") is in use", activeLeaseIds);
         }
         return register(profileId, sessionRef, LeaseState.READY);
     }
@@ -134,11 +134,11 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
 
     @Override
     public DeckState state() {
-        final var spend = all().stream()
+        final var spend = allLeases().stream()
                 .mapToDouble(this::cost)
                 .sum();
-        return new DeckState(properties.serverName(), upstream.implementation(), profiles(), recent())
-                .provider(upstream.provider()).spendUsd(spend);
+        return new DeckState(properties.serverName(), upstreamProperties.implementation(), profiles(), recentLeases())
+                .provider(upstreamProperties.provider()).spendUsd(spend);
     }
 
     @Override
@@ -149,19 +149,19 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
         }
         final var leaseRecord = activeRecord(leaseId);
         final var upstreamModel = model(leaseRecord.profileId());
-        final var body = (ObjectNode) request.deepCopy();
-        body.put("model", upstreamModel.model().value());
-        body.put("stream", true);
-        body.putObject("stream_options").put("include_usage", true);
-        final var base = upstream.baseUrl().endsWith("/") ? upstream.baseUrl() : upstream.baseUrl() + "/";
-        final var upstreamRequest = HttpRequest.newBuilder(URI.create(base + "chat/completions"))
+        final var upstreamBody = (ObjectNode) request.deepCopy();
+        upstreamBody.put("model", upstreamModel.model().value());
+        upstreamBody.put("stream", true);
+        upstreamBody.putObject("stream_options").put("include_usage", true);
+        final var baseUrl = upstreamProperties.baseUrl().endsWith("/") ? upstreamProperties.baseUrl() : upstreamProperties.baseUrl() + "/";
+        final var upstreamRequest = HttpRequest.newBuilder(URI.create(baseUrl + "chat/completions"))
                 .header("Authorization", providerAuthorization)
                 .header("Content-Type", "application/json")
                 .header("Accept", "text/event-stream")
-                .timeout(Duration.ofMinutes(upstream.requestTimeoutMinutes()))
-                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .timeout(Duration.ofMinutes(upstreamProperties.requestTimeoutMinutes()))
+                .POST(HttpRequest.BodyPublishers.ofString(upstreamBody.toString()))
                 .build();
-        final var name = "Provider " + upstream.provider();
+        final var providerLabel = "Provider " + upstreamProperties.provider();
         final HttpResponse<java.io.InputStream> response;
         try {
             response = http.send(upstreamRequest, HttpResponse.BodyHandlers.ofInputStream());
@@ -169,37 +169,37 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
             if (exception instanceof InterruptedException) {
                 currentThread().interrupt();
             }
-            throw new ApiException(GATEWAY_TIMEOUT, "upstream_error", name + " unreachable: " + exception.getMessage());
+            throw new ApiException(GATEWAY_TIMEOUT, "upstream_error", providerLabel + " unreachable: " + exception.getMessage());
         }
         if (response.statusCode() != OK.value()) {
             final String text;
             try (var responseBody = response.body()) {
                 text = new String(responseBody.readAllBytes(), UTF_8);
             } catch (Exception exception) {
-                throw new ApiException(BAD_GATEWAY, "upstream_error", name + " error " + response.statusCode());
+                throw new ApiException(BAD_GATEWAY, "upstream_error", providerLabel + " error " + response.statusCode());
             }
             final var upstreamStatus = HttpStatus.resolve(response.statusCode());
-            final var status = upstreamStatus == null ? SERVICE_UNAVAILABLE : switch (upstreamStatus) {
+            final var responseStatus = upstreamStatus == null ? SERVICE_UNAVAILABLE : switch (upstreamStatus) {
                 case TOO_MANY_REQUESTS -> TOO_MANY_REQUESTS;
                 case UNAUTHORIZED, FORBIDDEN -> UNAUTHORIZED;
                 case BAD_REQUEST, NOT_FOUND, UNPROCESSABLE_CONTENT -> BAD_REQUEST;
                 default -> SERVICE_UNAVAILABLE;
             };
-            throw new UpstreamException(status, text.isBlank() ? "{\"error\":{\"message\":\"" + name + " error "
+            throw new UpstreamException(responseStatus, text.isBlank() ? "{\"error\":{\"message\":\"" + providerLabel + " error "
                     + response.statusCode() + "\",\"type\":\"upstream_error\"}}" : text,
                     response.headers().firstValue("Retry-After").orElse(null));
         }
-        final var prompt = Json.promptTokens(request);
+        final var promptTokens = Json.promptTokens(request);
         final StreamingResponseBody stream = out -> {
             boolean sawUsage = false;
-            long chars = 0;
+            long completionChars = 0;
             try (var reader = new BufferedReader(new InputStreamReader(response.body(), UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     if (line.startsWith(SSE_DATA_PREFIX)) {
-                        final var data = line.substring(SSE_DATA_PREFIX.length()).trim();
-                        if (!data.equals("[DONE]") && data.startsWith("{")) {
-                            final var chunk = mapper.readTree(data);
+                        final var eventData = line.substring(SSE_DATA_PREFIX.length()).trim();
+                        if (!eventData.equals("[DONE]") && eventData.startsWith("{")) {
+                            final var chunk = mapper.readTree(eventData);
                             final var usage = chunk.path("usage");
                             if (usage.isObject()) {
                                 sawUsage = true;
@@ -209,7 +209,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
                             }
                             final var choices = chunk.path("choices");
                             for (int choiceIndex = 0; choiceIndex < choices.size(); choiceIndex++) {
-                                chars += Json.text(choices.get(choiceIndex).path("delta").path("content")).length();
+                                completionChars += Json.text(choices.get(choiceIndex).path("delta").path("content")).length();
                             }
                         }
                     }
@@ -220,7 +220,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
                 }
             } finally {
                 if (!sawUsage) {
-                    addUsage(leaseRecord, prompt, 0, max(1, chars / Json.CHARS_PER_TOKEN), true);
+                    addUsage(leaseRecord, promptTokens, 0, max(1, completionChars / Json.CHARS_PER_TOKEN), true);
                 }
                 out.flush();
             }

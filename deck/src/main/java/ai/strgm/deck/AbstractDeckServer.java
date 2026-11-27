@@ -70,7 +70,7 @@ public abstract class AbstractDeckServer implements DeckServer {
     }
 
     /** The ids of the active leases on {@code profileId}. */
-    protected List<LeaseId> active(final ProfileId profileId) {
+    protected List<LeaseId> activeLeaseIds(final ProfileId profileId) {
         synchronized (lock) {
             return leases.values().stream()
                     .filter(leaseRecord -> leaseRecord.active() && leaseRecord.profileId().equals(profileId))
@@ -102,14 +102,15 @@ public abstract class AbstractDeckServer implements DeckServer {
     }
 
     /** Adds a completion's tokens to its lease; {@code estimated} when the provider sent no usage. */
-    protected void addUsage(final LeaseRecord leaseRecord, final long prompt, final long cached, final long completion, final boolean estimated) {
+    protected void addUsage(final LeaseRecord leaseRecord, final long promptTokens, final long cachedTokens, final long completionTokens,
+            final boolean estimated) {
         synchronized (lock) {
-            leaseRecord.addUsage(prompt, cached, completion, estimated);
+            leaseRecord.addUsage(promptTokens, cachedTokens, completionTokens, estimated);
         }
     }
 
     /** Every lease, oldest first, as the API reports it. */
-    protected List<Lease> all() {
+    protected List<Lease> allLeases() {
         synchronized (lock) {
             return leases.values().stream()
                     .map(LeaseRecord::toApi)
@@ -118,9 +119,9 @@ public abstract class AbstractDeckServer implements DeckServer {
     }
 
     /** The most recent leases ({@code deck.recent-leases}), oldest first, for {@link #state()}. */
-    protected List<Lease> recent() {
-        final var all = all();
-        return all.subList(max(0, all.size() - properties.recentLeases()), all.size());
+    protected List<Lease> recentLeases() {
+        final var allLeases = allLeases();
+        return allLeases.subList(max(0, allLeases.size() - properties.recentLeases()), allLeases.size());
     }
 
     /**
@@ -131,11 +132,12 @@ public abstract class AbstractDeckServer implements DeckServer {
     @Override
     public final Acquisition acquire(final ProfileId profileId, final SessionRef sessionRef) {
         synchronized (lock) {
-            final var held = leases.values().stream()
+            final var heldLeaseRecord = leases.values().stream()
                     .filter(leaseRecord -> leaseRecord.active() && leaseRecord.profileId().equals(profileId)
                             && leaseRecord.sessionRef().equals(sessionRef))
                     .findFirst();
-            return held.isPresent() ? new Acquisition(held.get().toApi(), false) : new Acquisition(grant(profileId, sessionRef).toApi(), true);
+            return heldLeaseRecord.isPresent() ? new Acquisition(heldLeaseRecord.get().toApi(), false)
+                    : new Acquisition(grant(profileId, sessionRef).toApi(), true);
         }
     }
 
