@@ -6,9 +6,6 @@ import static java.lang.System.currentTimeMillis;
 import static java.util.Objects.requireNonNull;
 
 import ai.strgm.dealer.DealerProperties.ClientConfig;
-import ai.strgm.dealer.DeckRegistry.DeckServerRef;
-import ai.strgm.dealer.DeckRegistry.ModelProfileRef;
-import ai.strgm.dealer.Scheduler.Placement;
 import ai.strgm.dealer.api.model.SessionLeaseState;
 import ai.strgm.dealer.DeckProfile.TokenPrices;
 import ai.strgm.deck.api.model.LeaseState;

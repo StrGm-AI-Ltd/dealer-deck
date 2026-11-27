@@ -2,7 +2,6 @@ package ai.strgm.dealer;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-import ai.strgm.dealer.Scheduler.Placement;
 import ai.strgm.types.ProfileId;
 import ai.strgm.types.ServerName;
 import java.io.BufferedReader;

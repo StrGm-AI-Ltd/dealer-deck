@@ -2,7 +2,6 @@ package ai.strgm.dealer;
 
 import static java.lang.System.currentTimeMillis;
 
-import ai.strgm.dealer.Scheduler.Placement;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.Priority;
 import java.util.concurrent.CompletableFuture;

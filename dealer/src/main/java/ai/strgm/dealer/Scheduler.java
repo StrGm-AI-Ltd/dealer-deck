@@ -9,7 +9,6 @@ import static java.util.Comparator.comparingInt;
 import static java.util.Comparator.reverseOrder;
 
 import ai.strgm.dealer.DealerProperties.ClientConfig;
-import ai.strgm.dealer.DeckRegistry.ModelProfileRef;
 import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
@@ -57,8 +56,6 @@ public class Scheduler {
     private static final Pattern VIRTUAL_MODEL_NAME = Pattern.compile("auto-(\\d+)k");
     /** An {@code auto-<N>k} model that isn't one of the {@link AutoTier}s needs N thousand tokens. */
     private static final int TOKENS_PER_K = 1000;
-
-    public record Placement(Session session, ModelProfileRef profileRef, LeaseId leaseId) {}
 
     private final DeckRegistry decks;
     private final DealerProperties properties;
@@ -319,10 +316,10 @@ public class Scheduler {
                         log.info("Placed {} on {} ({})", session.ref(), candidate.key(), lease.state().getValue());
                         placed = true;
                         break;
-                    } catch (DeckRegistry.Blocked blocked) {
+                    } catch (LeaseBlockedException exception) {
                         if (firstBlocked == null) {
                             firstBlocked = candidate;
-                            firstBlockers = blocked.blockers;
+                            firstBlockers = exception.blockers();
                         }
                     } catch (Exception exception) {
                         log.warn("Lease on {} failed: {}", candidate.key(), exception.getMessage());

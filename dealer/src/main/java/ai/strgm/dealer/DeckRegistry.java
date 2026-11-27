@@ -7,7 +7,6 @@ import static java.util.Objects.requireNonNull;
 import static org.springframework.http.HttpStatus.CONFLICT;
 import static org.springframework.http.HttpStatus.OK;
 
-import ai.strgm.dealer.api.model.ServerType;
 import ai.strgm.deck.api.client.LeasesApi;
 import ai.strgm.deck.api.client.ModelProfilesApi;
 import ai.strgm.dealer.DeckProfile.TokenPrices;
@@ -26,6 +25,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,38 +48,11 @@ import tools.jackson.databind.ObjectMapper;
 public class DeckRegistry {
 
 
-    public record DeckServerRef(DealerProperties.DeckServerConfig config, ModelProfilesApi modelProfiles, LeasesApi leases,
-            @Nullable String providerAuthorization) {
-        public boolean external() {
-            return config.egress() == ServerType.EXTERNAL;
-        }
-
-        public ServerName name() {
-            return config.name();
-        }
-    }
-
-    public record ModelProfileRef(DeckServerRef serverRef, DeckProfile profile) {
-        public String key() {
-            return serverRef.name() + "/" + profile.id();
-        }
-
-        public boolean external() {
-            return serverRef.external();
-        }
-    }
-
-    /** DECK refused a lease; {@code blockers} are the leases in the way. */
-    public static class Blocked extends Exception {
-        final List<LeaseId> blockers;
-
-        Blocked(final List<LeaseId> blockers) {
-            super("blocked by " + blockers);
-            this.blockers = blockers;
-        }
-    }
+    /** A DECK server's generated clients, and the provider credential DEALER forwards to it, if any. */
+    private record DeckClients(ModelProfilesApi modelProfiles, LeasesApi leases, @Nullable String providerAuthorization) {}
 
     private final Map<ServerName, DeckServerRef> servers = new LinkedHashMap<>();
+    private final Map<ServerName, DeckClients> deckClients = new HashMap<>();
     private final Map<ServerName, Boolean> reachable = new ConcurrentHashMap<>();
     private final ObjectMapper mapper;
     private final HttpClient chatClient;
@@ -99,10 +72,15 @@ public class DeckRegistry {
                     .defaultHeader("Authorization", "Bearer " + serverConfig.key()).build();
             final var factory = HttpServiceProxyFactory.builderFor(RestClientAdapter.create(restClient)).build();
             final var credential = mapNullable(serverConfig.providerCredentialEnv(), System::getenv);
-            servers.put(serverConfig.name(), new DeckServerRef(serverConfig, factory.createClient(ModelProfilesApi.class),
-                    factory.createClient(LeasesApi.class), credential == null || credential.isBlank() ? null : "Bearer " + credential));
+            servers.put(serverConfig.name(), new DeckServerRef(serverConfig));
+            deckClients.put(serverConfig.name(), new DeckClients(factory.createClient(ModelProfilesApi.class), factory.createClient(LeasesApi.class),
+                    credential == null || credential.isBlank() ? null : "Bearer " + credential));
         }
         refresh();
+    }
+
+    private DeckClients clientsOf(final DeckServerRef serverRef) {
+        return requireNonNull(deckClients.get(serverRef.name()), "every configured DECK server has clients");
     }
 
     @Scheduled(fixedDelayString = "${dealer.timers.deck-refresh-millis}")
@@ -110,7 +88,7 @@ public class DeckRegistry {
         final List<ModelProfileRef> next = new ArrayList<>();
         for (final var serverRef : servers.values()) {
             try {
-                final var offeredProfiles = requireNonNull(serverRef.modelProfiles().getModelProfiles().getBody(),
+                final var offeredProfiles = requireNonNull(clientsOf(serverRef).modelProfiles().getModelProfiles().getBody(),
                         "no model profiles in the response");
                 offeredProfiles.getProfiles().forEach(profile -> next.add(new ModelProfileRef(serverRef, deckProfile(profile))));
                 reachable.put(serverRef.name(), true);
@@ -156,25 +134,25 @@ public class DeckRegistry {
         return reachable.getOrDefault(serverName, false);
     }
 
-    public DeckLease acquire(final ModelProfileRef profileRef, final SessionRef sessionRef) throws Blocked {
+    public DeckLease acquire(final ModelProfileRef profileRef, final SessionRef sessionRef) throws LeaseBlockedException {
         try {
-            return deckLease(requireNonNull(profileRef.serverRef().leases().acquireLease(new LeaseRequest(profileRef.profile().id(), sessionRef)).getBody(),
-                    "no lease in the response"));
+            return deckLease(requireNonNull(clientsOf(profileRef.serverRef()).leases().acquireLease(new LeaseRequest(profileRef.profile().id(), sessionRef))
+                    .getBody(), "no lease in the response"));
         } catch (HttpClientErrorException exception) {
             if (exception.getStatusCode().isSameCodeAs(CONFLICT)) {
-                throw new Blocked(mapper.readValue(exception.getResponseBodyAsString(), LeaseConflict.class).getBlockers());
+                throw new LeaseBlockedException(mapper.readValue(exception.getResponseBodyAsString(), LeaseConflict.class).getBlockers());
             }
             throw exception;
         }
     }
 
     public DeckLease lease(final DeckServerRef serverRef, final LeaseId leaseId) {
-        return deckLease(requireNonNull(serverRef.leases().getLease(leaseId).getBody(), "no lease in the response"));
+        return deckLease(requireNonNull(clientsOf(serverRef).leases().getLease(leaseId).getBody(), "no lease in the response"));
     }
 
     public void release(final DeckServerRef serverRef, final LeaseId leaseId) {
         try {
-            serverRef.leases().releaseLease(leaseId);
+            clientsOf(serverRef).leases().releaseLease(leaseId);
         } catch (Exception ignored) {
             // the lease may already be gone
         }
@@ -192,8 +170,9 @@ public class DeckRegistry {
                 .header("Content-Type", "application/json")
                 .timeout(chatRequestTimeout)
                 .POST(HttpRequest.BodyPublishers.ofString(requestBody));
-        if (serverRef.providerAuthorization() != null) {
-            request.header("X-Provider-Authorization", serverRef.providerAuthorization());
+        final var providerAuthorization = clientsOf(serverRef).providerAuthorization();
+        if (providerAuthorization != null) {
+            request.header("X-Provider-Authorization", providerAuthorization);
         }
         final HttpResponse<InputStream> response;
         try {
@@ -218,7 +197,7 @@ public class DeckRegistry {
 
     public void evict(final DeckServerRef serverRef, final LeaseId leaseId) {
         try {
-            serverRef.leases().evictLease(leaseId);
+            clientsOf(serverRef).leases().evictLease(leaseId);
         } catch (Exception ignored) {
             // the lease may already be gone
         }
