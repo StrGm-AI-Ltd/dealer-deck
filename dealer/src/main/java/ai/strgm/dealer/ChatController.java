@@ -79,6 +79,7 @@ public class ChatController {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "Missing \"model\"");
         }
         final var model = new ModelName(requestedModel);
+        // TODO(#62): say which DECK servers and model profiles the client may use, instead of its external-routing flag
         if (scheduler.candidates(client, model).isEmpty()) {
             throw new ApiException(HttpStatus.NOT_FOUND, "model_not_found",
                     "No DECK profile serves \"" + model + "\" for client " + client.name()

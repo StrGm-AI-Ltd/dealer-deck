@@ -11,6 +11,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public record DealerProperties(String metricsKey, Timers timers, List<ClientDef> clients, List<ServerDef> servers) {
 
     /** A client: its API key, priority (1–100; only this can evict) and whether it may use external servers (D79). */
+    // TODO(#62): clients move to the database, and their DECK servers and model profiles replace externalRouting
     public record ClientDef(ClientName name, String key, int priority, boolean externalRouting) {
         public ClientDef {
             if (!Priorities.RANGE.contains(priority)) {

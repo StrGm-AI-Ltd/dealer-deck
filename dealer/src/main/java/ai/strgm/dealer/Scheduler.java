@@ -76,6 +76,8 @@ public class Scheduler {
     }
 
     /** The profiles a request may use, in preference order. */
+    // TODO(#62): limit them to the DECK servers and model profiles in the client's stored configuration, instead of
+    // every profile, with external servers only behind the client's external-routing flag
     List<ProfileRef> candidates(final ClientDef client, final ModelName model) {
         final var all = decks.profiles();
         final var auto = AUTO.matcher(model.value());

@@ -36,6 +36,7 @@ public class DealerApiController implements ModelsApi, MetricsApi {
         for (final var tier : AutoTier.ALL) {
             data.add(new Model(tier.name(), "model", startedAt, "dealer").contextWindow(tier.contextWindow()).virtual(true));
         }
+        // TODO(#62): list only the profiles the requesting client may use, not every profile for every client
         // a profile is listed by its id, which clients may request as a model name
         decks.profiles().forEach(profileRef -> data.add(new Model(new ModelName(profileRef.profile().getId().value()), "model", startedAt,
                 profileRef.server().name().value()).deckServer(profileRef.server().name())
@@ -46,6 +47,7 @@ public class DealerApiController implements ModelsApi, MetricsApi {
 
     @Override
     public ResponseEntity<DealerState> getDealerState() {
+        // TODO(#62): report each client's DECK servers and model profiles instead of its external-routing flag
         final var clients = props.clients().stream()
                 .map(client -> new ClientInfo().name(client.name()).priority(client.priority()).externalRouting(client.externalRouting()))
                 .toList();
