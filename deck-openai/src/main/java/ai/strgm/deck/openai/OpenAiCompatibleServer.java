@@ -32,6 +32,7 @@ import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.ProfileId;
 import ai.strgm.types.SessionRef;
+import ai.strgm.util.Nulls;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.URI;
@@ -91,8 +92,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
         return upstream.models().stream()
                 .map(upstreamModel -> new ModelProfile(profileId(upstreamModel), new ModelName(prefix + upstreamModel.model()),
                         upstreamModel.contextWindow(), Readiness.LOADED).provider(upstream.provider()).limitations(new Limitations())
-                        .quantization(upstreamModel.quantization() == null ? null
-                                : new Quantization(upstreamModel.quantization()).bitsPerWeight(upstreamModel.bitsPerWeight()))
+                        .quantization(Nulls.map(upstreamModel.quantization(), quantization -> new Quantization(quantization).bitsPerWeight(upstreamModel.bitsPerWeight())))
                         .maxLeases(upstreamModel.maxLeases()).activeLeases(active(profileId(upstreamModel)).size())
                         .prices(new Prices().inputPerMTok(upstreamModel.inputPerMTok())
                                 .cachedInputPerMTok(upstreamModel.cachedInputPerMTok()).outputPerMTok(upstreamModel.outputPerMTok())))

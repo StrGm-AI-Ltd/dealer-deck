@@ -11,6 +11,7 @@ dependencyManagement {
 
 // Microtypes: the identifiers and names DECK and DEALER exchange, each with its own type. The OpenAPI documents
 // declare them as named string schemas, and the generated code uses these classes for them (api/build.gradle).
+// Also small utilities both share (ai.strgm.util).
 dependencies {
     api 'com.fasterxml.jackson.core:jackson-annotations'
     api 'org.jspecify:jspecify'

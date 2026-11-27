@@ -18,6 +18,7 @@ import ai.strgm.types.ModelName;
 import ai.strgm.types.ProfileId;
 import ai.strgm.types.SessionId;
 import ai.strgm.types.SessionRef;
+import ai.strgm.util.Nulls;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -181,7 +182,7 @@ public class Scheduler {
             cancel(leaseRequest);
             throw new ApiException(SERVICE_UNAVAILABLE, "server_error", "Interrupted while queued");
         } catch (ExecutionException exception) {
-            final var reason = exception.getCause() == null ? null : exception.getCause().getMessage();
+            final var reason = Nulls.map(exception.getCause(), Throwable::getMessage);
             throw new ApiException(SERVICE_UNAVAILABLE, "server_error", reason != null ? reason : "The request couldn't be placed");
         }
     }
@@ -351,7 +352,7 @@ public class Scheduler {
                 continue;
             }
             evictions.addLast(new EvictionEvent().createdAt(Instant.ofEpochMilli(now).getEpochSecond()).victimClient(victim.clientConfig().name()).victimSession(victim.id())
-                    .deckServer(target.serverRef().name()).profileId(victim.heldLease() == null ? null : victim.heldLease().profileRef().profile().getId()).byClient(leaseRequest.session().clientConfig().name())
+                    .deckServer(target.serverRef().name()).profileId(Nulls.map(victim.heldLease(), held -> held.profileRef().profile().getId())).byClient(leaseRequest.session().clientConfig().name())
                     .reason("priority " + leaseRequest.session().clientConfig().priority() + " > " + victim.clientConfig().priority() + " needs " + target.profile().getId()));
             while (evictions.size() > properties.evictionHistory()) {
                 evictions.removeFirst();

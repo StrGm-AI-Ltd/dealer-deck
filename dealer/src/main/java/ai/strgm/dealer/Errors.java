@@ -9,6 +9,7 @@ import static org.springframework.http.MediaType.APPLICATION_JSON;
 
 import ai.strgm.dealer.api.model.ErrorBody;
 import ai.strgm.dealer.api.model.ErrorResponse;
+import ai.strgm.util.Nulls;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.jspecify.annotations.Nullable;
@@ -75,7 +76,7 @@ public class Errors extends ResponseEntityExceptionHandler {
                 .findFirst()
                 .orElse(null);
         return invalid(BAD_REQUEST, "Invalid request: " + exception.getMessage(),
-                first == null ? null : first.substring(first.lastIndexOf('.') + 1));
+                Nulls.map(first, propertyPath -> propertyPath.substring(propertyPath.lastIndexOf('.') + 1)));
     }
 
     /** Anything else: a 500, without the exception's details, which are logged. */

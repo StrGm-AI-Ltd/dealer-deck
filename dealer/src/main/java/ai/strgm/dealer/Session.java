@@ -17,6 +17,7 @@ import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.SessionId;
 import ai.strgm.types.SessionRef;
+import ai.strgm.util.Nulls;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -206,9 +207,9 @@ final class Session {
 
     SessionInfo toInfo(final long now) {
         return new SessionInfo().client(clientConfig.name()).sessionId(id).model(modelName)
-                .deckServer(heldLease == null ? null : heldLease.profileRef().serverRef().name())
-                .serverType(heldLease == null ? null : heldLease.profileRef().serverRef().config().egress())
-                .profileId(heldLease == null ? null : heldLease.profileRef().profile().getId()).leaseId(heldLease == null ? null : heldLease.id())
+                .deckServer(Nulls.map(heldLease, held -> held.profileRef().serverRef().name()))
+                .serverType(Nulls.map(heldLease, held -> held.profileRef().serverRef().config().egress()))
+                .profileId(Nulls.map(heldLease, held -> held.profileRef().profile().getId())).leaseId(Nulls.map(heldLease, HeldLease::id))
                 .leaseState(leaseState).leaseAgeMs(heldLease == null || leaseReadyAt == 0 ? null : now - leaseReadyAt)
                 .idleMs(inFlight > 0 ? 0L : now - lastActivity).inFlight(inFlight).evictPending(evictPending)
                 .requests(requests).promptTokens(promptTokens).cachedTokens(cachedTokens)
