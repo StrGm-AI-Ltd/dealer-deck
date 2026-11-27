@@ -67,8 +67,11 @@ public class Errors extends ResponseEntityExceptionHandler {
     /** A parameter outside its documented constraints, from method validation. */
     @ExceptionHandler(ConstraintViolationException.class)
     public ResponseEntity<Object> handle(final ConstraintViolationException exception) {
-        final var first = exception.getConstraintViolations().stream().map(violation -> violation.getPropertyPath().toString())
-                .sorted().findFirst().orElse(null);
+        final var first = exception.getConstraintViolations().stream()
+                .map(violation -> violation.getPropertyPath().toString())
+                .sorted()
+                .findFirst()
+                .orElse(null);
         return invalid(HttpStatus.BAD_REQUEST, "Invalid request: " + exception.getMessage(),
                 first == null ? null : first.substring(first.lastIndexOf('.') + 1));
     }
@@ -112,10 +115,12 @@ public class Errors extends ResponseEntityExceptionHandler {
     protected ResponseEntity<Object> handleMethodArgumentNotValid(final MethodArgumentNotValidException exception,
             final HttpHeaders headers, final HttpStatusCode status, final WebRequest request) {
         final var errors = exception.getBindingResult().getFieldErrors().stream()
-                .sorted(comparing(FieldError::getField)).toList();
-        return invalid(status, "Invalid request body: " + errors.stream()
-                .map(fieldError -> fieldError.getField() + " " + fieldError.getDefaultMessage()).collect(joining("; ")),
-                errors.isEmpty() ? null : errors.getFirst().getField());
+                .sorted(comparing(FieldError::getField))
+                .toList();
+        final var details = errors.stream()
+                .map(fieldError -> fieldError.getField() + " " + fieldError.getDefaultMessage())
+                .collect(joining("; "));
+        return invalid(status, "Invalid request body: " + details, errors.isEmpty() ? null : errors.getFirst().getField());
     }
 
     @Override

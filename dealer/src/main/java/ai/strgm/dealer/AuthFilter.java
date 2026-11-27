@@ -32,7 +32,9 @@ public class AuthFilter extends OncePerRequestFilter {
             final FilterChain chain) throws ServletException, IOException {
         final var header = request.getHeader("Authorization");
         final var key = header != null && header.startsWith(BEARER_PREFIX) ? header.substring(BEARER_PREFIX.length()) : "";
-        final var client = properties.clients().stream().filter(candidate -> candidate.key().equals(key)).findFirst();
+        final var client = properties.clients().stream()
+                .filter(candidate -> candidate.key().equals(key))
+                .findFirst();
         if (client.isPresent()) {
             request.setAttribute(CLIENT, client.get());
             chain.doFilter(request, response);

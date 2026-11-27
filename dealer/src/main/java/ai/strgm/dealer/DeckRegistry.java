@@ -101,7 +101,9 @@ public class DeckRegistry {
                 reachable.put(server.name(), true);
             } catch (Exception exception) {
                 reachable.put(server.name(), false);
-                profiles.stream().filter(profileRef -> profileRef.server() == server).forEach(next::add);
+                profiles.stream()
+                        .filter(profileRef -> profileRef.server() == server)
+                        .forEach(next::add);
             }
         }
         profiles = List.copyOf(next);

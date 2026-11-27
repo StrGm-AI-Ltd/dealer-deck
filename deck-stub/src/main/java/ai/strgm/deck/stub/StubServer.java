@@ -98,12 +98,15 @@ public class StubServer extends AbstractDeckServer {
     }
 
     private ProfileDef profileDef(final ProfileId id) {
-        return PROFILE_DEFS.stream().filter(definition -> definition.id().equals(id)).findFirst()
+        return PROFILE_DEFS.stream()
+                .filter(definition -> definition.id().equals(id))
+                .findFirst()
                 .orElseThrow(() -> unknownProfile(id));
     }
 
     private boolean overlaps(final ProfileDef first, final ProfileDef second) {
-        return first.workers().stream().anyMatch(second.workers()::contains);
+        return first.workers().stream()
+                .anyMatch(second.workers()::contains);
     }
 
     /** The profile's speeds at {@code contextTokens}: linear between the two nearest points, clamped outside them. */
@@ -127,35 +130,47 @@ public class StubServer extends AbstractDeckServer {
     private ModelProfile toApi(final ProfileDef profile) {
         final boolean isLoaded;
         synchronized (lock) {
-            isLoaded = profile.workers().stream().allMatch(worker -> profile.id().value().equals(loaded.get(worker)));
+            isLoaded = profile.workers().stream()
+                    .allMatch(worker -> profile.id().value().equals(loaded.get(worker)));
         }
         // a lease here takes a worker that every overlapping profile needs
-        final var reductions = PROFILE_DEFS.stream().filter(other -> other != profile && overlaps(other, profile))
-                .map(other -> new LeaseReduction(other.id(), LEASES_PER_PROFILE)).toList();
+        final var reductions = PROFILE_DEFS.stream()
+                .filter(other -> other != profile && overlaps(other, profile))
+                .map(other -> new LeaseReduction(other.id(), LEASES_PER_PROFILE))
+                .toList();
         return new ModelProfile(profile.id(), profile.model(), profile.contextWindow(), isLoaded ? Readiness.LOADED : Readiness.UNLOADED)
                 .loadingTimeMs((int) scaled(profile.loadMs()))
                 .quantization(new Quantization(profile.quantization()).bitsPerWeight(profile.bitsPerWeight()))
                 .limitations(new Limitations().leaseReductions(reductions))
                 .prices(new Prices().inputPerMTok(0.0).cachedInputPerMTok(0.0).outputPerMTok(0.0))
                 .maxLeases(LEASES_PER_PROFILE).activeLeases(active(profile.id()).size())
-                .speeds(profile.speeds().stream().map(point -> new SpeedPoint(point.contextTokens(),
-                        point.prefillTps() / stub.timeFactor(), point.decodeTps() / stub.timeFactor())).toList());
+                .speeds(profile.speeds().stream()
+                        .map(point -> new SpeedPoint(point.contextTokens(),
+                                point.prefillTps() / stub.timeFactor(), point.decodeTps() / stub.timeFactor()))
+                        .toList());
     }
 
     @Override
     public ModelProfiles modelProfiles() {
-        return new ModelProfiles(properties.serverName(), Implementation.STUB, PROFILE_DEFS.stream().map(this::toApi).toList());
+        final var profiles = PROFILE_DEFS.stream()
+                .map(this::toApi)
+                .toList();
+        return new ModelProfiles(properties.serverName(), Implementation.STUB, profiles);
     }
 
     @Override
     protected LeaseRecord grant(final ProfileId profileId, final SessionRef sessionRef) {
         final var profile = profileDef(profileId);
-        final var blockers = activeRecords().stream().filter(other -> overlaps(profileDef(other.profileId()), profile)).map(LeaseRecord::id).toList();
+        final var blockers = activeRecords().stream()
+                .filter(other -> overlaps(profileDef(other.profileId()), profile))
+                .map(LeaseRecord::id)
+                .toList();
         if (!blockers.isEmpty()) {
             throw new ApiException(HttpStatus.CONFLICT, "lease_conflict",
                     "Profile " + profileId + " is blocked by active leases", blockers);
         }
-        final var isLoaded = profile.workers().stream().allMatch(worker -> profile.id().value().equals(loaded.get(worker)));
+        final var isLoaded = profile.workers().stream()
+                .allMatch(worker -> profile.id().value().equals(loaded.get(worker)));
         final var lease = register(profileId, sessionRef, isLoaded ? LeaseState.READY : LeaseState.LOADING);
         if (!isLoaded) {
             profile.workers().forEach(worker -> loaded.put(worker, LOADING_PREFIX + profile.id()));
@@ -175,11 +190,15 @@ public class StubServer extends AbstractDeckServer {
         final List<Worker> workers;
         synchronized (lock) {
             final var active = activeRecords();
-            workers = loaded.entrySet().stream().map(worker -> {
-                final var busy = active.stream().anyMatch(lease -> profileDef(lease.profileId()).workers().contains(worker.getKey()));
-                return new Worker().id(worker.getKey()).loadedProfile(worker.getValue())
-                        .state(worker.getValue().startsWith(LOADING_PREFIX) ? WorkerState.LOADING : busy ? WorkerState.LEASED : WorkerState.IDLE);
-            }).toList();
+            workers = loaded.entrySet().stream()
+                    .map(worker -> {
+                        final var busy = active.stream()
+                                .anyMatch(lease -> profileDef(lease.profileId()).workers().contains(worker.getKey()));
+                        return new Worker().id(worker.getKey()).loadedProfile(worker.getValue())
+                                .state(worker.getValue().startsWith(LOADING_PREFIX) ? WorkerState.LOADING
+                                        : busy ? WorkerState.LEASED : WorkerState.IDLE);
+                    })
+                    .toList();
         }
         return new DeckState(properties.serverName(), Implementation.STUB, modelProfiles().getProfiles(), recent())
                 .workers(workers).spendUsd(0.0);

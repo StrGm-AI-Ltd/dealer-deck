@@ -70,7 +70,9 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
     }
 
     private UpstreamProperties.Model model(final ProfileId profileId) {
-        return upstream.models().stream().filter(upstreamModel -> profileId(upstreamModel).equals(profileId)).findFirst()
+        return upstream.models().stream()
+                .filter(upstreamModel -> profileId(upstreamModel).equals(profileId))
+                .findFirst()
                 .orElseThrow(() -> unknownProfile(profileId));
     }
 
@@ -126,7 +128,9 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
 
     @Override
     public DeckState state() {
-        final var spend = all().stream().mapToDouble(this::cost).sum();
+        final var spend = all().stream()
+                .mapToDouble(this::cost)
+                .sum();
         return new DeckState(properties.serverName(), upstream.implementation(), profiles(), recent())
                 .provider(upstream.provider()).spendUsd(spend);
     }

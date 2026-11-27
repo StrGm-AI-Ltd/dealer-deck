@@ -54,7 +54,9 @@ public class DealerApiController implements ModelsApi, MetricsApi {
         final var servers = decks.servers().values().stream()
                 .map(server -> new ServerInfo().name(server.name()).url(server.config().url())
                         .serverType(server.config().egress()).reachable(decks.reachable(server.name()))
-                        .profiles((int) decks.profiles().stream().filter(profileRef -> profileRef.server() == server).count()))
+                        .profiles((int) decks.profiles().stream()
+                                .filter(profileRef -> profileRef.server() == server)
+                                .count()))
                 .toList();
         return ResponseEntity.ok(new DealerState().clients(clients).servers(servers).queue(scheduler.queue())
                 .sessions(scheduler.sessions()).evictions(scheduler.evictions()));

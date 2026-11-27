@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -86,18 +87,28 @@ public class Scheduler {
         final var all = decks.profiles();
         final var auto = AUTO.matcher(model.value());
         if (auto.matches()) {
-            final int min = AutoTier.ALL.stream().filter(tier -> tier.name().equals(model)).mapToInt(AutoTier::contextWindow)
-                    .findFirst().orElse(parseInt(auto.group(1)) * TOKENS_PER_K);
-            final var local = all.stream().filter(profileRef -> !profileRef.external() && profileRef.profile().getContextWindow() >= min)
-                    .sorted(comparingInt(profileRef -> profileRef.profile().getContextWindow())).toList();
+            final int min = AutoTier.ALL.stream()
+                    .filter(tier -> tier.name().equals(model))
+                    .mapToInt(AutoTier::contextWindow)
+                    .findFirst()
+                    .orElse(parseInt(auto.group(1)) * TOKENS_PER_K);
+            final var local = all.stream()
+                    .filter(profileRef -> !profileRef.external() && profileRef.profile().getContextWindow() >= min)
+                    .sorted(comparingInt(profileRef -> profileRef.profile().getContextWindow()))
+                    .toList();
             final var external = client.externalRouting()
-                    ? all.stream().filter(profileRef -> profileRef.external() && profileRef.profile().getContextWindow() >= min).toList()
+                    ? all.stream()
+                            .filter(profileRef -> profileRef.external() && profileRef.profile().getContextWindow() >= min)
+                            .toList()
                     : List.<ProfileRef>of();
-            return Stream.concat(local.stream(), external.stream()).toList();
+            return Stream.concat(local.stream(), external.stream())
+                    .toList();
         }
         // a client may name a profile by its id as well as by its model
-        return all.stream().filter(profileRef -> profileRef.profile().getId().value().equals(model.value()) || profileRef.profile().getModel().equals(model))
-                .filter(profileRef -> !profileRef.external() || client.externalRouting()).toList();
+        return all.stream()
+                .filter(profileRef -> profileRef.profile().getId().value().equals(model.value()) || profileRef.profile().getModel().equals(model))
+                .filter(profileRef -> !profileRef.external() || client.externalRouting())
+                .toList();
     }
 
     public boolean isVirtual(final ModelName model) {
@@ -251,7 +262,9 @@ public class Scheduler {
             if (reservation.getValue() == leaseRequest) {
                 continue;
             }
-            final var reserved = decks.profiles().stream().filter(profileRef -> profileRef.key().equals(reservation.getKey())).findFirst();
+            final var reserved = decks.profiles().stream()
+                    .filter(profileRef -> profileRef.key().equals(reservation.getKey()))
+                    .findFirst();
             if (reserved.isEmpty()) {
                 continue;
             }
@@ -269,7 +282,8 @@ public class Scheduler {
     /** Whether a lease on {@code p} reduces the leases another profile on its server can grant. Any reduction counts. */
     private static boolean reduces(final ModelProfile profile, final ProfileId otherId) {
         return profile.getLimitations() != null && profile.getLimitations().getLeaseReductions() != null
-                && profile.getLimitations().getLeaseReductions().stream().anyMatch(reduction -> reduction.getProfileId().equals(otherId));
+                && profile.getLimitations().getLeaseReductions().stream()
+                        .anyMatch(reduction -> reduction.getProfileId().equals(otherId));
     }
 
     /** Places every placeable lease request, in priority order, and starts evictions where client priority allows. */
@@ -328,7 +342,9 @@ public class Scheduler {
     private void considerEviction(final LeaseRequest leaseRequest, final ProfileRef target, final List<LeaseId> blockers) {
         final List<Session> victims = new ArrayList<>();
         for (final var leaseId : blockers) {
-            final var holder = sessions.values().stream().filter(session -> session.holds(leaseId, target.server())).findFirst();
+            final var holder = sessions.values().stream()
+                    .filter(session -> session.holds(leaseId, target.server()))
+                    .findFirst();
             if (holder.isEmpty() || holder.get().client().priority() >= leaseRequest.session().client().priority()) {
                 return;
             }
@@ -375,18 +391,30 @@ public class Scheduler {
     public List<QueuedRequest> queue() {
         synchronized (lock) {
             final var now = currentTimeMillis();
-            return leaseRequests.stream().map(leaseRequest -> new QueuedRequest().client(leaseRequest.session().client().name())
-                    .sessionId(leaseRequest.session().id()).model(leaseRequest.model()).clientPriority(leaseRequest.session().client().priority())
-                    .requestPriority(leaseRequest.requestPriority()).waitingMs(now - leaseRequest.enqueuedAt()).reservedProfile(reservations.entrySet().stream()
-                            .filter(reservation -> reservation.getValue() == leaseRequest).map(Map.Entry::getKey).findFirst().orElse(null)))
+            return leaseRequests.stream()
+                    .map(leaseRequest -> new QueuedRequest().client(leaseRequest.session().client().name())
+                            .sessionId(leaseRequest.session().id()).model(leaseRequest.model())
+                            .clientPriority(leaseRequest.session().client().priority()).requestPriority(leaseRequest.requestPriority())
+                            .waitingMs(now - leaseRequest.enqueuedAt()).reservedProfile(reservedProfile(leaseRequest)))
                     .toList();
         }
+    }
+
+    /** The profile being drained for a lease request, if any. */
+    private @Nullable String reservedProfile(final LeaseRequest leaseRequest) {
+        return reservations.entrySet().stream()
+                .filter(reservation -> reservation.getValue() == leaseRequest)
+                .map(Map.Entry::getKey)
+                .findFirst()
+                .orElse(null);
     }
 
     public List<SessionInfo> sessions() {
         synchronized (lock) {
             final var now = currentTimeMillis();
-            return sessions.values().stream().map(session -> session.toInfo(now)).toList();
+            return sessions.values().stream()
+                    .map(session -> session.toInfo(now))
+                    .toList();
         }
     }
 

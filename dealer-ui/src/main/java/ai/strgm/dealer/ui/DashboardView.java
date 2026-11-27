@@ -1,5 +1,7 @@
 package ai.strgm.dealer.ui;
 
+import static java.util.stream.Collectors.joining;
+
 import ai.strgm.dealer.api.model.ClientInfo;
 import ai.strgm.dealer.api.model.EvictionEvent;
 import ai.strgm.dealer.api.model.QueuedRequest;
@@ -96,10 +98,7 @@ public class DashboardView extends VerticalLayout {
                     ? "" : " (" + seconds(profile.getLoadingTimeMs().longValue()) + " to load)")).setHeader("Readiness").setAutoWidth(true);
             profiles.addColumn(profile -> (profile.getActiveLeases() == null ? 0 : profile.getActiveLeases()) + " / " + (profile.getMaxLeases() == null ? "∞" : profile.getMaxLeases())).setHeader("Leases / budget").setAutoWidth(true);
             profiles.addColumn(ModelProfile::getContextWindow).setHeader("Window").setAutoWidth(true);
-            profiles.addColumn(profile -> profile.getLimitations() == null || profile.getLimitations().getLeaseReductions() == null
-                    || profile.getLimitations().getLeaseReductions().isEmpty() ? "-"
-                    : String.join(", ", profile.getLimitations().getLeaseReductions().stream()
-                            .map(reduction -> reduction.getProfileId() + " \u2212" + reduction.getLeases()).toList())).setHeader("Lease reductions").setAutoWidth(true);
+            profiles.addColumn(DashboardView::leaseReductions).setHeader("Lease reductions").setAutoWidth(true);
             profiles.setAllRowsVisible(true);
             final var workers = new Grid<Worker>();
             workers.addColumn(Worker::getId).setHeader("Worker");
@@ -184,6 +183,18 @@ public class DashboardView extends VerticalLayout {
                     // TODO(#104): the spend's own currency, as for the session cost
                     + String.format(" · spend $%.6f", deck.getSpendUsd() == null ? 0 : deck.getSpendUsd()));
         });
+    }
+
+    /** A profile's lease reductions, e.g. {@code large −1}, or {@code -} if it has none. */
+    private static String leaseReductions(final ModelProfile profile) {
+        final var limitations = profile.getLimitations();
+        final var reductions = limitations == null ? null : limitations.getLeaseReductions();
+        if (reductions == null || reductions.isEmpty()) {
+            return "-";
+        }
+        return reductions.stream()
+                .map(reduction -> reduction.getProfileId() + " \u2212" + reduction.getLeases())
+                .collect(joining(", "));
     }
 
     private static String seconds(final Long millis) {

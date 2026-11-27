@@ -64,14 +64,19 @@ public abstract class AbstractDeckServer implements DeckServer {
     /** The active leases, oldest first. Their ids and profiles are safe to read without the lock: they never change. */
     protected List<LeaseRecord> activeRecords() {
         synchronized (lock) {
-            return leases.values().stream().filter(LeaseRecord::active).toList();
+            return leases.values().stream()
+                    .filter(LeaseRecord::active)
+                    .toList();
         }
     }
 
     /** The ids of the active leases on {@code profileId}. */
     protected List<LeaseId> active(final ProfileId profileId) {
         synchronized (lock) {
-            return leases.values().stream().filter(lease -> lease.active() && lease.profileId().equals(profileId)).map(LeaseRecord::id).toList();
+            return leases.values().stream()
+                    .filter(lease -> lease.active() && lease.profileId().equals(profileId))
+                    .map(LeaseRecord::id)
+                    .toList();
         }
     }
 
@@ -107,7 +112,9 @@ public abstract class AbstractDeckServer implements DeckServer {
     /** Every lease, oldest first, as the API reports it. */
     protected List<Lease> all() {
         synchronized (lock) {
-            return leases.values().stream().map(LeaseRecord::toApi).toList();
+            return leases.values().stream()
+                    .map(LeaseRecord::toApi)
+                    .toList();
         }
     }
 
@@ -148,10 +155,12 @@ public abstract class AbstractDeckServer implements DeckServer {
     @Override
     public List<Lease> leases(final @Nullable ProfileId profileId, final @Nullable SessionRef sessionRef) {
         synchronized (lock) {
-            return leases.values().stream().filter(LeaseRecord::active)
+            return leases.values().stream()
+                    .filter(LeaseRecord::active)
                     .filter(lease -> profileId == null || lease.profileId().equals(profileId))
                     .filter(lease -> sessionRef == null || sessionRef.equals(lease.sessionRef()))
-                    .map(LeaseRecord::toApi).toList();
+                    .map(LeaseRecord::toApi)
+                    .toList();
         }
     }
 
