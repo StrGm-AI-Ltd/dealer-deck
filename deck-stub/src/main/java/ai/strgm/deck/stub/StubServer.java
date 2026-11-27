@@ -1,5 +1,11 @@
 package ai.strgm.deck.stub;
 
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+import static java.lang.Math.round;
+import static java.lang.System.currentTimeMillis;
+import static java.lang.Thread.currentThread;
+
 import ai.strgm.deck.AbstractDeckServer;
 import ai.strgm.deck.ApiException;
 import ai.strgm.deck.DeckProperties;
@@ -88,7 +94,7 @@ public class StubServer extends AbstractDeckServer {
     }
 
     private long scaled(final long millis) {
-        return Math.round(millis * stub.timeFactor());
+        return round(millis * stub.timeFactor());
     }
 
     private ProfileDef profileDef(final ProfileId id) {
@@ -183,17 +189,17 @@ public class StubServer extends AbstractDeckServer {
     public StreamingResponseBody chat(final LeaseId leaseId, final @Nullable String providerAuthorization, final JsonNode request) {
         final var lease = activeRecord(leaseId);
         final var profile = profileDef(lease.profileId());
-        final var maxTokens = (int) Math.max(1, Math.min(Json.number(request.path("max_tokens")) == 0 ? DEFAULT_MAX_TOKENS
+        final var maxTokens = (int) max(1, min(Json.number(request.path("max_tokens")) == 0 ? DEFAULT_MAX_TOKENS
                 : Json.number(request.path("max_tokens")), WORDS.length));
         final var includeUsage = Json.bool(request.path("stream_options").path("include_usage"));
         final var prompt = Json.promptTokens(request);
         final var speed = speedAt(profile, prompt);
         final StreamingResponseBody body = out -> {
-            final var deadline = System.currentTimeMillis() + LOADING_WAIT.toMillis();
-            while (isLoading(lease) && System.currentTimeMillis() < deadline) {
+            final var deadline = currentTimeMillis() + LOADING_WAIT.toMillis();
+            while (isLoading(lease) && currentTimeMillis() < deadline) {
                 sleep(LOADING_POLL_MS);
             }
-            sleep(scaled(profile.ttftMs()) + Math.round(prompt * MILLIS_PER_SECOND / speed.prefillTps() * stub.timeFactor()));
+            sleep(scaled(profile.ttftMs()) + round(prompt * MILLIS_PER_SECOND / speed.prefillTps() * stub.timeFactor()));
             final var id = "chatcmpl-" + lease.id();
             final var created = Instant.now().getEpochSecond();
             for (int tokenIndex = 0; tokenIndex < maxTokens; tokenIndex++) {
@@ -208,7 +214,7 @@ public class StubServer extends AbstractDeckServer {
                 delta.put("content", WORDS[tokenIndex] + " ");
                 choice.putNull("finish_reason");
                 write(out, chunk.toString());
-                sleep(Math.round(MILLIS_PER_SECOND / speed.decodeTps() * stub.timeFactor()));
+                sleep(round(MILLIS_PER_SECOND / speed.decodeTps() * stub.timeFactor()));
             }
             final var last = mapper.createObjectNode();
             last.put("id", id).put("object", "chat.completion.chunk").put("created", created).put("model", profile.model().value());
@@ -240,9 +246,9 @@ public class StubServer extends AbstractDeckServer {
 
     private static void sleep(final long millis) {
         try {
-            Thread.sleep(Math.max(0, millis));
+            Thread.sleep(max(0, millis));
         } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
+            currentThread().interrupt();
         }
     }
 }

@@ -1,5 +1,7 @@
 package ai.strgm.dealer;
 
+import static java.lang.System.currentTimeMillis;
+
 import ai.strgm.dealer.Scheduler.Placement;
 import ai.strgm.types.ModelName;
 import java.util.concurrent.CompletableFuture;
@@ -15,6 +17,6 @@ record LeaseRequest(Session session, ModelName model, int requestPriority, long 
         CompletableFuture<Placement> placement) {
 
     LeaseRequest(final Session session, final ModelName model, final int requestPriority, final long arrivalOrder) {
-        this(session, model, requestPriority, System.currentTimeMillis(), arrivalOrder, new CompletableFuture<>());
+        this(session, model, requestPriority, currentTimeMillis(), arrivalOrder, new CompletableFuture<>());
     }
 }

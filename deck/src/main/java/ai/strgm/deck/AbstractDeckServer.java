@@ -1,5 +1,7 @@
 package ai.strgm.deck;
 
+import static java.lang.Math.max;
+
 import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.types.LeaseId;
@@ -112,7 +114,7 @@ public abstract class AbstractDeckServer implements DeckServer {
     /** The {@value #RECENT_LEASES} most recent leases, oldest first, for {@link #state()}. */
     protected List<Lease> recent() {
         final var all = all();
-        return all.subList(Math.max(0, all.size() - RECENT_LEASES), all.size());
+        return all.subList(max(0, all.size() - RECENT_LEASES), all.size());
     }
 
     /**

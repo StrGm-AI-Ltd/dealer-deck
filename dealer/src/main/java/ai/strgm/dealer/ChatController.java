@@ -1,5 +1,7 @@
 package ai.strgm.dealer;
 
+import static java.lang.Thread.currentThread;
+
 import ai.strgm.dealer.DealerProperties.ClientDef;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.SessionId;
@@ -108,7 +110,7 @@ public class ChatController {
         } catch (Exception exception) {
             scheduler.release(placement, 0, 0, 0);
             if (exception instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
+                currentThread().interrupt();
             }
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", "DECK server " + server.name() + " unreachable");
         }

@@ -1,11 +1,12 @@
 package ai.strgm.deck;
 
+import static java.util.Comparator.comparing;
+import static java.util.stream.Collectors.joining;
+
 import ai.strgm.deck.api.model.ErrorBody;
 import ai.strgm.deck.api.model.ErrorResponse;
 import ai.strgm.deck.api.model.LeaseConflict;
 import jakarta.validation.ConstraintViolationException;
-import java.util.Comparator;
-import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.LoggerFactory;
@@ -120,9 +121,9 @@ public class Errors extends ResponseEntityExceptionHandler {
     protected ResponseEntity<Object> handleMethodArgumentNotValid(final MethodArgumentNotValidException exception,
             final HttpHeaders headers, final HttpStatusCode status, final WebRequest request) {
         final var errors = exception.getBindingResult().getFieldErrors().stream()
-                .sorted(Comparator.comparing(FieldError::getField)).toList();
+                .sorted(comparing(FieldError::getField)).toList();
         return invalid(status, "Invalid request body: " + errors.stream()
-                .map(fieldError -> fieldError.getField() + " " + fieldError.getDefaultMessage()).collect(Collectors.joining("; ")),
+                .map(fieldError -> fieldError.getField() + " " + fieldError.getDefaultMessage()).collect(joining("; ")),
                 errors.isEmpty() ? null : errors.getFirst().getField());
     }
 

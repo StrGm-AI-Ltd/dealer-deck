@@ -1,5 +1,8 @@
 package ai.strgm.deck.openai;
 
+import static java.lang.Math.max;
+import static java.lang.Thread.currentThread;
+
 import ai.strgm.deck.AbstractDeckServer;
 import ai.strgm.deck.ApiException;
 import ai.strgm.deck.DeckProperties;
@@ -154,7 +157,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
             response = http.send(upstreamRequest, HttpResponse.BodyHandlers.ofInputStream());
         } catch (Exception exception) {
             if (exception instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
+                currentThread().interrupt();
             }
             throw new ApiException(HttpStatus.GATEWAY_TIMEOUT, "upstream_error", name + " unreachable: " + exception.getMessage());
         }
@@ -207,7 +210,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
                 }
             } finally {
                 if (!sawUsage) {
-                    addUsage(lease, prompt, 0, Math.max(1, chars / Json.CHARS_PER_TOKEN), true);
+                    addUsage(lease, prompt, 0, max(1, chars / Json.CHARS_PER_TOKEN), true);
                 }
                 out.flush();
             }

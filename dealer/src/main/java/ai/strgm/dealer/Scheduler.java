@@ -1,5 +1,10 @@
 package ai.strgm.dealer;
 
+import static java.lang.Integer.parseInt;
+import static java.lang.System.currentTimeMillis;
+import static java.lang.Thread.currentThread;
+import static java.util.Comparator.comparingInt;
+
 import ai.strgm.dealer.DealerProperties.ClientDef;
 import ai.strgm.dealer.DeckRegistry.ProfileRef;
 import ai.strgm.dealer.api.model.EvictionEvent;
@@ -16,7 +21,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -83,9 +87,9 @@ public class Scheduler {
         final var auto = AUTO.matcher(model.value());
         if (auto.matches()) {
             final int min = AutoTier.ALL.stream().filter(tier -> tier.name().equals(model)).mapToInt(AutoTier::contextWindow)
-                    .findFirst().orElse(Integer.parseInt(auto.group(1)) * TOKENS_PER_K);
+                    .findFirst().orElse(parseInt(auto.group(1)) * TOKENS_PER_K);
             final var local = all.stream().filter(profileRef -> !profileRef.external() && profileRef.profile().getContextWindow() >= min)
-                    .sorted(Comparator.comparingInt(profileRef -> profileRef.profile().getContextWindow())).toList();
+                    .sorted(comparingInt(profileRef -> profileRef.profile().getContextWindow())).toList();
             final var external = client.externalRouting()
                     ? all.stream().filter(profileRef -> profileRef.external() && profileRef.profile().getContextWindow() >= min).toList()
                     : List.<ProfileRef>of();
@@ -166,7 +170,7 @@ public class Scheduler {
         try {
             return leaseRequest.placement().get();
         } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
+            currentThread().interrupt();
             cancel(leaseRequest);
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", "Interrupted while queued");
         } catch (ExecutionException exception) {
@@ -183,7 +187,7 @@ public class Scheduler {
         } catch (ExecutionException exception) {
             // it was cancelled: the next attempt decides what this request does
         } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
+            currentThread().interrupt();
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", "Interrupted while queued");
         }
     }
@@ -203,8 +207,8 @@ public class Scheduler {
     /** Waits for the placement's lease to be ready, asking DECK until the session knows it is. */
     private void awaitReady(final Placement placement) {
         final var session = placement.session();
-        final var deadline = System.currentTimeMillis() + READINESS_TIMEOUT.toMillis();
-        while (System.currentTimeMillis() < deadline) {
+        final var deadline = currentTimeMillis() + READINESS_TIMEOUT.toMillis();
+        while (currentTimeMillis() < deadline) {
             synchronized (lock) {
                 if (session.isReady()) {
                     return;
@@ -280,7 +284,7 @@ public class Scheduler {
                     decks.release(released.profile().server(), released.id());
                 }
             }
-            leaseRequests.sort(Comparator.<LeaseRequest>comparingInt(queued -> -queued.session().client().priority())
+            leaseRequests.sort(comparingInt((LeaseRequest queued) -> -queued.session().client().priority())
                     .thenComparingInt(queued -> -queued.requestPriority()).thenComparingLong(LeaseRequest::arrivalOrder));
             final var queue = leaseRequests.iterator();
             while (queue.hasNext()) {
@@ -331,7 +335,7 @@ public class Scheduler {
             victims.add(holder.get());
         }
         reservations.putIfAbsent(target.key(), leaseRequest);
-        final var now = System.currentTimeMillis();
+        final var now = currentTimeMillis();
         final var minLeaseMs = Duration.ofSeconds(properties.timers().minLeaseSeconds()).toMillis();
         for (final var victim : victims) {
             if (!victim.markEvicting(now, minLeaseMs)) {
@@ -356,7 +360,7 @@ public class Scheduler {
     public void tick() {
         synchronized (lock) {
             final var idleMs = Duration.ofSeconds(properties.timers().idleSeconds()).toMillis();
-            final var now = System.currentTimeMillis();
+            final var now = currentTimeMillis();
             for (final var session : sessions.values()) {
                 final var released = session.releasedIfIdle(now, idleMs);
                 if (released != null) {
@@ -370,7 +374,7 @@ public class Scheduler {
 
     public List<QueuedRequest> queue() {
         synchronized (lock) {
-            final var now = System.currentTimeMillis();
+            final var now = currentTimeMillis();
             return leaseRequests.stream().map(leaseRequest -> new QueuedRequest().client(leaseRequest.session().client().name())
                     .sessionId(leaseRequest.session().id()).model(leaseRequest.model()).clientPriority(leaseRequest.session().client().priority())
                     .requestPriority(leaseRequest.requestPriority()).waitingMs(now - leaseRequest.enqueuedAt()).reservedProfile(reservations.entrySet().stream()
@@ -381,7 +385,7 @@ public class Scheduler {
 
     public List<SessionInfo> sessions() {
         synchronized (lock) {
-            final var now = System.currentTimeMillis();
+            final var now = currentTimeMillis();
             return sessions.values().stream().map(session -> session.toInfo(now)).toList();
         }
     }
@@ -396,7 +400,7 @@ public class Scheduler {
         try {
             Thread.sleep(millis);
         } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
+            currentThread().interrupt();
         }
     }
 }

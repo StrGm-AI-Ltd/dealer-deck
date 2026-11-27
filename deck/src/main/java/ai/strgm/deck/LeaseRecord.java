@@ -1,5 +1,8 @@
 package ai.strgm.deck;
 
+import static java.lang.System.currentTimeMillis;
+import static java.util.UUID.randomUUID;
+
 import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.deck.api.model.Usage;
@@ -17,10 +20,10 @@ public final class LeaseRecord {
     /** How many of a random UUID's characters a lease id keeps. */
     private static final int ID_LENGTH = 8;
 
-    private final LeaseId id = new LeaseId("lease-" + UUID.randomUUID().toString().substring(0, ID_LENGTH));
+    private final LeaseId id = new LeaseId("lease-" + randomUUID().toString().substring(0, ID_LENGTH));
     private final ProfileId profileId;
     private final SessionRef sessionRef;
-    private final long createdAt = System.currentTimeMillis();
+    private final long createdAt = currentTimeMillis();
     private LeaseState state;
     private @Nullable Long readyAt;
     private long promptTokens;
@@ -60,7 +63,7 @@ public final class LeaseRecord {
     /** A loading lease becomes ready; a lease released or evicted while it loaded stays so. */
     void markReady() {
         if (state == LeaseState.LOADING) {
-            readyAt = System.currentTimeMillis();
+            readyAt = currentTimeMillis();
             state = LeaseState.READY;
         }
     }

@@ -1,5 +1,9 @@
 package ai.strgm.dealer;
 
+import static java.lang.Math.max;
+import static java.lang.System.currentTimeMillis;
+import static java.util.Objects.requireNonNull;
+
 import ai.strgm.dealer.DealerProperties.ClientDef;
 import ai.strgm.dealer.DeckRegistry.ProfileRef;
 import ai.strgm.dealer.DeckRegistry.Server;
@@ -13,7 +17,6 @@ import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.SessionId;
 import ai.strgm.types.SessionRef;
-import java.util.Objects;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -35,7 +38,7 @@ final class Session {
     private @Nullable HeldLease lease;
     private SessionLeaseState leaseState = SessionLeaseState.NONE;
     private long leaseReadyAt;
-    private long lastActivity = System.currentTimeMillis();
+    private long lastActivity = currentTimeMillis();
     private int inFlight;
     private boolean evictPending;
     private @Nullable LeaseRequest pending;
@@ -67,7 +70,7 @@ final class Session {
     /** Counts a new request, and restarts the session's idle time. */
     void recordRequest() {
         requests++;
-        lastActivity = System.currentTimeMillis();
+        lastActivity = currentTimeMillis();
     }
 
     /** The session's queued lease request, if any. */
@@ -93,7 +96,7 @@ final class Session {
 
     /** Places another request on the session's lease, which {@link #canReuse} allowed. */
     Placement reuse() {
-        final var held = Objects.requireNonNull(lease, "canReuse() found a lease");
+        final var held = requireNonNull(lease, "canReuse() found a lease");
         inFlight++;
         return new Placement(this, held.profile(), held.id());
     }
@@ -131,13 +134,13 @@ final class Session {
 
     void markReady(final Lease ready) {
         leaseState = SessionLeaseState.READY;
-        leaseReadyAt = ready.getReadyAtMs() == null ? System.currentTimeMillis() : ready.getReadyAtMs();
+        leaseReadyAt = ready.getReadyAtMs() == null ? currentTimeMillis() : ready.getReadyAtMs();
     }
 
     /** Ends a request on the session's lease: undoes its in-flight count and adds its usage. */
     void endRequest(final long prompt, final long cached, final long completion, final @Nullable Prices prices) {
-        inFlight = Math.max(0, inFlight - 1);
-        lastActivity = System.currentTimeMillis();
+        inFlight = max(0, inFlight - 1);
+        lastActivity = currentTimeMillis();
         promptTokens += prompt;
         cachedTokens += cached;
         completionTokens += completion;
