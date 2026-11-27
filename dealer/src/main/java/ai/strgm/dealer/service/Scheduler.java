@@ -72,6 +72,11 @@ public class Scheduler {
 
     private final DeckRegistry decks;
     private final DealerProperties properties;
+    /**
+     * Guards the scheduler's state: the sessions and every {@link Session} in them, which isn't thread-safe, the lease
+     * requests, the reservations, the evictions and the arrival order. Every read and write of them holds it, so two
+     * requests in one session never touch the session at the same time.
+     */
     private final Object lock = new Object();
     // TODO(#109): keep the sessions, lease requests, reservations and evictions in a persistent store, so a DEALER
     // restart neither loses them nor orphans the sessions' DECK leases
