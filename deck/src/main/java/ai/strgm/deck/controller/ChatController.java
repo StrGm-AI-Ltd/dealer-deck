@@ -47,6 +47,7 @@ public class ChatController {
         if (!Json.bool(chatRequest.path("stream"))) {
             throw new ApiException(BAD_REQUEST, "invalid_request_error", "Streaming only: set \"stream\": true");
         }
+        // TODO(#111): reject with 400 a request whose messages isn't an array of objects, or that has no model
         final var chatStream = server.openChatStream(new LeaseId(leaseId), providerAuthorization, chatRequest);
         final StreamingResponseBody responseBody = chatStream::writeTo;
         return ResponseEntity.ok().contentType(TEXT_EVENT_STREAM).body(responseBody);

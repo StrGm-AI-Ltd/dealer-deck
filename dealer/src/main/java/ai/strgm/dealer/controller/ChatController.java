@@ -55,6 +55,7 @@ public class ChatController {
         if (!(chatRequest.path("stream").isBoolean() && chatRequest.path("stream").booleanValue())) {
             throw new ApiException(BAD_REQUEST, "invalid_request_error", "DEALER streams only in v0.5: set \"stream\": true");
         }
+        // TODO(#111): reject with 400 a request whose messages isn't an array of objects
         if (sessionIdHeader == null) {
             throw invalidSessionId();
         }
