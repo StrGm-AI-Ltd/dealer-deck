@@ -5,7 +5,7 @@ import static java.lang.System.currentTimeMillis;
 import static java.lang.Thread.currentThread;
 import static java.util.Comparator.comparingInt;
 
-import ai.strgm.dealer.DealerProperties.ClientDef;
+import ai.strgm.dealer.DealerProperties.ClientConfig;
 import ai.strgm.dealer.DeckRegistry.ModelProfileRef;
 import ai.strgm.dealer.api.model.EvictionEvent;
 import ai.strgm.dealer.api.model.QueuedRequest;
@@ -79,7 +79,7 @@ public class Scheduler {
     /** The profiles a request may use, in preference order. */
     // TODO(#62): limit them to the DECK servers and model profiles in the client's stored configuration, instead of
     // every profile, with external servers only behind the client's external-routing flag
-    List<ModelProfileRef> candidates(final ClientDef client, final ModelName model) {
+    List<ModelProfileRef> candidates(final ClientConfig client, final ModelName model) {
         final var all = decks.profiles();
         final var auto = AUTO.matcher(model.value());
         if (auto.matches()) {
@@ -112,7 +112,7 @@ public class Scheduler {
     }
 
     /** Blocks until the request is placed on a ready lease. */
-    public Placement acquire(final ClientDef client, final SessionId sessionId, final ModelName model, final int requestPriority) {
+    public Placement acquire(final ClientConfig client, final SessionId sessionId, final ModelName model, final int requestPriority) {
         final var placement = place(client, sessionId, model, requestPriority);
         try {
             awaitReady(placement);
@@ -129,7 +129,7 @@ public class Scheduler {
      * Places the request on its session's lease, or queues it for a new one. A session queues one acquisition at a
      * time (#64): a request that finds one queued waits for it, then tries again.
      */
-    private Placement place(final ClientDef client, final SessionId sessionId, final ModelName model, final int requestPriority) {
+    private Placement place(final ClientConfig client, final SessionId sessionId, final ModelName model, final int requestPriority) {
         final Session session;
         synchronized (lock) {
             session = sessions.computeIfAbsent(sessionKey(client, sessionId), key -> new Session(client, sessionId));
@@ -168,7 +168,7 @@ public class Scheduler {
      * A session's key: the reference DECK knows it by. Session ids are scoped to their client, and two clients can
      * both have a session {@code s-1}, so the key holds both.
      */
-    private static SessionRef sessionKey(final ClientDef client, final SessionId sessionId) {
+    private static SessionRef sessionKey(final ClientConfig client, final SessionId sessionId) {
         return SessionRef.of(client.name(), sessionId);
     }
 

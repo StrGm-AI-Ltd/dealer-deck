@@ -4,9 +4,9 @@ import static java.lang.Math.max;
 import static java.lang.System.currentTimeMillis;
 import static java.util.Objects.requireNonNull;
 
-import ai.strgm.dealer.DealerProperties.ClientDef;
+import ai.strgm.dealer.DealerProperties.ClientConfig;
+import ai.strgm.dealer.DeckRegistry.DeckServerRef;
 import ai.strgm.dealer.DeckRegistry.ModelProfileRef;
-import ai.strgm.dealer.DeckRegistry.Server;
 import ai.strgm.dealer.Scheduler.Placement;
 import ai.strgm.dealer.api.model.SessionInfo;
 import ai.strgm.dealer.api.model.SessionLeaseState;
@@ -31,7 +31,7 @@ final class Session {
     /** The lease a session holds; its profile and id are set and cleared together. */
     record HeldLease(ModelProfileRef profile, LeaseId id) {}
 
-    private final ClientDef client;
+    private final ClientConfig client;
     private final SessionId id;
     /** The model of the session's lease, or of its last one. */
     private @Nullable ModelName model;
@@ -49,12 +49,12 @@ final class Session {
     // TODO(#104): a money amount with its currency, instead of a bare double whose currency only its name gives
     private double costUsd;
 
-    Session(final ClientDef client, final SessionId id) {
+    Session(final ClientConfig client, final SessionId id) {
         this.client = client;
         this.id = id;
     }
 
-    ClientDef client() {
+    ClientConfig client() {
         return client;
     }
 
@@ -106,7 +106,7 @@ final class Session {
     }
 
     /** Whether the session holds lease {@code leaseId} on {@code server}. */
-    boolean holds(final LeaseId leaseId, final Server server) {
+    boolean holds(final LeaseId leaseId, final DeckServerRef server) {
         return lease != null && lease.id().equals(leaseId) && lease.profile().server() == server;
     }
 

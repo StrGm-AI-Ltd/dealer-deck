@@ -14,7 +14,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  */
 @ConfigurationProperties("deck.upstream")
 public record UpstreamProperties(String provider, Implementation implementation, String baseUrl, @Nullable String idPrefix,
-        List<Model> models, int connectTimeoutSeconds, int requestTimeoutMinutes) {
+        List<UpstreamModel> models, int connectTimeoutSeconds, int requestTimeoutMinutes) {
 
     /**
      * {@code maxLeases}: the model's instance budget (null = unbounded), e.g. to cap an expensive model (D106).
@@ -22,6 +22,6 @@ public record UpstreamProperties(String provider, Implementation implementation,
      * e.g. in Nebius's model catalogue (null = unknown).
      */
     // TODO(#104): prices as money amounts with their currency, instead of bare doubles in an implied currency
-    public record Model(ModelName model, int contextWindow, double inputPerMTok, double cachedInputPerMTok,
+    public record UpstreamModel(ModelName model, int contextWindow, double inputPerMTok, double cachedInputPerMTok,
             double outputPerMTok, @Nullable Integer maxLeases, @Nullable String quantization, @Nullable Double bitsPerWeight) {}
 }

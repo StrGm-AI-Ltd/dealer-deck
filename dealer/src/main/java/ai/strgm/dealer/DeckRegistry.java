@@ -35,7 +35,7 @@ import tools.jackson.databind.ObjectMapper;
 public class DeckRegistry {
 
 
-    public record Server(DealerProperties.ServerDef config, ModelProfilesApi modelProfiles, LeasesApi leases,
+    public record DeckServerRef(DealerProperties.DeckServerConfig config, ModelProfilesApi modelProfiles, LeasesApi leases,
             @Nullable String providerAuthorization) {
         public boolean external() {
             return config.egress() == ServerType.EXTERNAL;
@@ -46,7 +46,7 @@ public class DeckRegistry {
         }
     }
 
-    public record ModelProfileRef(Server server, ModelProfile profile) {
+    public record ModelProfileRef(DeckServerRef server, ModelProfile profile) {
         public String key() {
             return server.name() + "/" + profile.getId();
         }
@@ -66,7 +66,7 @@ public class DeckRegistry {
         }
     }
 
-    private final Map<ServerName, Server> servers = new LinkedHashMap<>();
+    private final Map<ServerName, DeckServerRef> servers = new LinkedHashMap<>();
     private final Map<ServerName, Boolean> reachable = new ConcurrentHashMap<>();
     private final ObjectMapper mapper;
     private volatile List<ModelProfileRef> profiles = List.of();
@@ -81,7 +81,7 @@ public class DeckRegistry {
                     .defaultHeader("Authorization", "Bearer " + serverConfig.key()).build();
             final var factory = HttpServiceProxyFactory.builderFor(RestClientAdapter.create(restClient)).build();
             final var credential = serverConfig.providerCredentialEnv() == null ? null : getenv(serverConfig.providerCredentialEnv());
-            servers.put(serverConfig.name(), new Server(serverConfig, factory.createClient(ModelProfilesApi.class),
+            servers.put(serverConfig.name(), new DeckServerRef(serverConfig, factory.createClient(ModelProfilesApi.class),
                     factory.createClient(LeasesApi.class), credential == null || credential.isBlank() ? null : "Bearer " + credential));
         }
         refresh();
@@ -109,7 +109,7 @@ public class DeckRegistry {
         return profiles;
     }
 
-    public Map<ServerName, Server> servers() {
+    public Map<ServerName, DeckServerRef> servers() {
         return servers;
     }
 
@@ -129,11 +129,11 @@ public class DeckRegistry {
         }
     }
 
-    public Lease lease(final Server server, final LeaseId leaseId) {
+    public Lease lease(final DeckServerRef server, final LeaseId leaseId) {
         return requireNonNull(server.leases().getLease(leaseId).getBody(), "no lease in the response");
     }
 
-    public void release(final Server server, final LeaseId leaseId) {
+    public void release(final DeckServerRef server, final LeaseId leaseId) {
         try {
             server.leases().releaseLease(leaseId);
         } catch (Exception ignored) {
@@ -141,7 +141,7 @@ public class DeckRegistry {
         }
     }
 
-    public void evict(final Server server, final LeaseId leaseId) {
+    public void evict(final DeckServerRef server, final LeaseId leaseId) {
         try {
             server.leases().evictLease(leaseId);
         } catch (Exception ignored) {

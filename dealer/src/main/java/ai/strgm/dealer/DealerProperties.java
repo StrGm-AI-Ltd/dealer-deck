@@ -9,13 +9,13 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /** DEALER's configuration; {@code evictionHistory} is how many eviction events {@code /metrics/state} keeps. */
 @ConfigurationProperties("dealer")
-public record DealerProperties(String metricsKey, Timers timers, Timeouts timeouts, int evictionHistory, List<ClientDef> clients,
-        List<ServerDef> servers) {
+public record DealerProperties(String metricsKey, Timers timers, Timeouts timeouts, int evictionHistory, List<ClientConfig> clients,
+        List<DeckServerConfig> servers) {
 
     /** A client: its API key, priority (1–100; only this can evict) and whether it may use external servers (D79). */
     // TODO(#62): clients move to the database, and their DECK servers and model profiles replace externalRouting
-    public record ClientDef(ClientName name, String key, int priority, boolean externalRouting) {
-        public ClientDef {
+    public record ClientConfig(ClientName name, String key, int priority, boolean externalRouting) {
+        public ClientConfig {
             if (!Priorities.RANGE.contains(priority)) {
                 throw new IllegalArgumentException("Client " + name + ": priority " + priority + " isn't between "
                         + Priorities.MIN + " and " + Priorities.MAX);
@@ -27,7 +27,7 @@ public record DealerProperties(String metricsKey, Timers timers, Timeouts timeou
      * A DECK server. The operator classifies it as local or external (D94). DEALER holds its DECK key and, for
      * external servers, the provider credential it forwards in v0.5 (D104), read from an environment variable.
      */
-    public record ServerDef(ServerName name, String url, ServerType egress, String key, @Nullable String providerCredentialEnv) {}
+    public record DeckServerConfig(ServerName name, String url, ServerType egress, String key, @Nullable String providerCredentialEnv) {}
 
     /**
      * M ({@code minLeaseSeconds}): how long a lease is ready before it can be evicted; N ({@code idleSeconds}): how

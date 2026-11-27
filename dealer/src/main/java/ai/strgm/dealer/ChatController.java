@@ -2,7 +2,7 @@ package ai.strgm.dealer;
 
 import static java.lang.Thread.currentThread;
 
-import ai.strgm.dealer.DealerProperties.ClientDef;
+import ai.strgm.dealer.DealerProperties.ClientConfig;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.SessionId;
 import jakarta.servlet.http.HttpServletRequest;
@@ -58,7 +58,7 @@ public class ChatController {
             @RequestHeader(value = "X-Session-Id", required = false) final @Nullable String sessionId,
             @RequestHeader(value = "X-Request-Priority", required = false) final @Nullable Integer requestPriority,
             final HttpServletRequest servletRequest) {
-        final var client = (ClientDef) servletRequest.getAttribute(AuthFilter.CLIENT);
+        final var client = (ClientConfig) servletRequest.getAttribute(AuthFilter.CLIENT);
         if (client == null) {
             throw new ApiException(HttpStatus.UNAUTHORIZED, "authentication_error", "A client API key is required");
         }

@@ -18,6 +18,7 @@ import ai.strgm.deck.api.model.ModelProfiles;
 import ai.strgm.deck.api.model.Prices;
 import ai.strgm.deck.api.model.Quantization;
 import ai.strgm.deck.api.model.Readiness;
+import ai.strgm.deck.openai.UpstreamProperties.UpstreamModel;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.ProfileId;
@@ -67,7 +68,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
         this.prefix = upstream.idPrefix() == null ? upstream.provider() + "/" : upstream.idPrefix();
     }
 
-    private UpstreamProperties.Model model(final ProfileId profileId) {
+    private UpstreamModel model(final ProfileId profileId) {
         return upstream.models().stream()
                 .filter(upstreamModel -> profileId(upstreamModel).equals(profileId))
                 .findFirst()
@@ -75,7 +76,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
     }
 
     /** A model's profile id, which is also the model name DEALER's clients request: the provider's name, prefixed. */
-    private ProfileId profileId(final UpstreamProperties.Model upstreamModel) {
+    private ProfileId profileId(final UpstreamModel upstreamModel) {
         return new ProfileId(prefix + upstreamModel.model());
     }
 
