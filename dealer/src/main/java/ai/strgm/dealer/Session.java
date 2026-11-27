@@ -1,5 +1,6 @@
 package ai.strgm.dealer;
 
+import static ai.strgm.util.Nulls.mapNullable;
 import static java.lang.Math.max;
 import static java.lang.System.currentTimeMillis;
 import static java.util.Objects.requireNonNull;
@@ -17,7 +18,6 @@ import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.SessionId;
 import ai.strgm.types.SessionRef;
-import ai.strgm.util.Nulls;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -207,10 +207,10 @@ final class Session {
 
     SessionInfo toInfo(final long now) {
         return new SessionInfo().client(clientConfig.name()).sessionId(id).model(modelName)
-                .deckServer(Nulls.map(heldLease, currentLease -> currentLease.profileRef().serverRef().name()))
-                .serverType(Nulls.map(heldLease, currentLease -> currentLease.profileRef().serverRef().config().egress()))
-                .profileId(Nulls.map(heldLease, currentLease -> currentLease.profileRef().profile().getId()))
-                .leaseId(Nulls.map(heldLease, HeldLease::id))
+                .deckServer(mapNullable(heldLease, currentLease -> currentLease.profileRef().serverRef().name()))
+                .serverType(mapNullable(heldLease, currentLease -> currentLease.profileRef().serverRef().config().egress()))
+                .profileId(mapNullable(heldLease, currentLease -> currentLease.profileRef().profile().getId()))
+                .leaseId(mapNullable(heldLease, HeldLease::id))
                 .leaseState(leaseState).leaseAgeMs(heldLease == null || leaseReadyAt == 0 ? null : now - leaseReadyAt)
                 .idleMs(inFlight > 0 ? 0L : now - lastActivity).inFlight(inFlight).evictPending(evictPending)
                 .requests(requests).promptTokens(promptTokens).cachedTokens(cachedTokens)

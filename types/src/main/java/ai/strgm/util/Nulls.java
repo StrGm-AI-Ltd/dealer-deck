@@ -10,10 +10,10 @@ public final class Nulls {
 
     /**
      * Applies {@code mapper} to {@code value}, or returns null when {@code value} is null:
-     * {@code Nulls.map(heldLease, HeldLease::id)} instead of {@code heldLease == null ? null : heldLease.id()}. The value
+     * {@code mapNullable(heldLease, HeldLease::id)} instead of {@code heldLease == null ? null : heldLease.id()}. The value
      * is read once, and the lambda only ever sees a non-null value.
      */
-    public static <T, R> @Nullable R map(final @Nullable T value, final Function<? super T, ? extends @Nullable R> mapper) {
+    public static <T, R> @Nullable R mapNullable(final @Nullable T value, final Function<? super T, ? extends @Nullable R> mapper) {
         return value == null ? null : mapper.apply(value);
     }
 }

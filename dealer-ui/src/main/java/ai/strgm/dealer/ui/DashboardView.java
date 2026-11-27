@@ -1,5 +1,6 @@
 package ai.strgm.dealer.ui;
 
+import static ai.strgm.util.Nulls.mapNullable;
 import static java.util.stream.Collectors.joining;
 
 import ai.strgm.dealer.api.model.ClientInfo;
@@ -10,7 +11,6 @@ import ai.strgm.deck.api.model.Limitations;
 import ai.strgm.deck.api.model.ModelProfile;
 import ai.strgm.deck.api.model.Readiness;
 import ai.strgm.deck.api.model.Worker;
-import ai.strgm.util.Nulls;
 import com.vaadin.flow.component.AttachEvent;
 import com.vaadin.flow.component.ClientCallable;
 import com.vaadin.flow.component.DetachEvent;
@@ -190,7 +190,7 @@ public class DashboardView extends VerticalLayout {
 
     /** A profile's lease reductions, e.g. {@code large −1}, or {@code -} if it has none. */
     private static String leaseReductions(final ModelProfile profile) {
-        final var reductions = Nulls.map(profile.getLimitations(), Limitations::getLeaseReductions);
+        final var reductions = mapNullable(profile.getLimitations(), Limitations::getLeaseReductions);
         if (reductions == null || reductions.isEmpty()) {
             return "-";
         }

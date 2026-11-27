@@ -1,5 +1,6 @@
 package ai.strgm.dealer;
 
+import static ai.strgm.util.Nulls.mapNullable;
 import static java.util.Objects.requireNonNull;
 import static org.springframework.http.HttpStatus.CONFLICT;
 
@@ -13,7 +14,6 @@ import ai.strgm.deck.api.model.ModelProfile;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ServerName;
 import ai.strgm.types.SessionRef;
-import ai.strgm.util.Nulls;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -80,7 +80,7 @@ public class DeckRegistry {
             final var restClient = RestClient.builder().requestFactory(requests).baseUrl(serverConfig.url())
                     .defaultHeader("Authorization", "Bearer " + serverConfig.key()).build();
             final var factory = HttpServiceProxyFactory.builderFor(RestClientAdapter.create(restClient)).build();
-            final var credential = Nulls.map(serverConfig.providerCredentialEnv(), System::getenv);
+            final var credential = mapNullable(serverConfig.providerCredentialEnv(), System::getenv);
             servers.put(serverConfig.name(), new DeckServerRef(serverConfig, factory.createClient(ModelProfilesApi.class),
                     factory.createClient(LeasesApi.class), credential == null || credential.isBlank() ? null : "Bearer " + credential));
         }

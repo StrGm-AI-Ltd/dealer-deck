@@ -1,5 +1,6 @@
 package ai.strgm.deck;
 
+import static ai.strgm.util.Nulls.mapNullable;
 import static java.util.Comparator.comparing;
 import static java.util.stream.Collectors.joining;
 import static org.springframework.http.HttpStatus.BAD_REQUEST;
@@ -10,7 +11,6 @@ import static org.springframework.http.MediaType.APPLICATION_JSON;
 import ai.strgm.deck.api.model.ErrorBody;
 import ai.strgm.deck.api.model.ErrorResponse;
 import ai.strgm.deck.api.model.LeaseConflict;
-import ai.strgm.util.Nulls;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.jspecify.annotations.Nullable;
@@ -85,7 +85,7 @@ public class Errors extends ResponseEntityExceptionHandler {
                 .findFirst()
                 .orElse(null);
         return invalid(BAD_REQUEST, "Invalid request: " + exception.getMessage(),
-                Nulls.map(firstPropertyPath, propertyPath -> propertyPath.substring(propertyPath.lastIndexOf('.') + 1)));
+                mapNullable(firstPropertyPath, propertyPath -> propertyPath.substring(propertyPath.lastIndexOf('.') + 1)));
     }
 
     /** Anything else: a 500, without the exception's details, which are logged. */
