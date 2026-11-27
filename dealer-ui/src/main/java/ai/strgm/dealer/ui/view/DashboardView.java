@@ -1,6 +1,7 @@
 package ai.strgm.dealer.ui.view;
 
 import static ai.strgm.util.Nulls.mapNullable;
+import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.joining;
 
 import ai.strgm.dealer.api.model.ClientInfo;
@@ -30,6 +31,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 /** The live view: DEALER's queue, sessions and leases, evictions, tokens and cost, and each DECK server's state. */
 @Route("")
@@ -60,7 +62,9 @@ public class DashboardView extends VerticalLayout {
         sessions.addColumn(SessionInfo::getClient).setHeader("Client").setAutoWidth(true);
         sessions.addColumn(SessionInfo::getSessionId).setHeader("Session").setAutoWidth(true);
         sessions.addColumn(SessionInfo::getModel).setHeader("Model").setAutoWidth(true);
-        sessions.addColumn(session -> session.getDeckServer() == null ? "-" : session.getDeckServer() + " (" + session.getServerType().getValue() + ")").setHeader("DECK server").setAutoWidth(true);
+        sessions.addColumn(session -> session.getDeckServer() == null ? "-"
+                : session.getDeckServer() + (session.getServerType() == null ? "" : " (" + session.getServerType().getValue() + ")"))
+                .setHeader("DECK server").setAutoWidth(true);
         sessions.addColumn(session -> session.getProfileId() == null ? "-" : session.getProfileId()).setHeader("Profile").setAutoWidth(true);
         sessions.addColumn(SessionInfo::getLeaseState).setHeader("Lease").setAutoWidth(true);
         sessions.addColumn(session -> seconds(session.getLeaseAgeMs())).setHeader("Lease age").setAutoWidth(true);
@@ -81,7 +85,8 @@ public class DashboardView extends VerticalLayout {
         queue.addColumn(request -> request.getReservedProfile() == null ? "-" : request.getReservedProfile()).setHeader("Reserved (draining)");
         queue.setAllRowsVisible(true);
 
-        evictions.addColumn(eviction -> TIME.format(Instant.ofEpochSecond(eviction.getCreatedAt()))).setHeader("Time").setAutoWidth(true);
+        evictions.addColumn(eviction -> eviction.getCreatedAt() == null ? "-" : TIME.format(Instant.ofEpochSecond(eviction.getCreatedAt())))
+                .setHeader("Time").setAutoWidth(true);
         evictions.addColumn(eviction -> eviction.getVictimClient() + " / " + eviction.getVictimSession()).setHeader("Evicted").setAutoWidth(true);
         evictions.addColumn(eviction -> eviction.getDeckServer() + "/" + eviction.getProfileId()).setHeader("From").setAutoWidth(true);
         evictions.addColumn(EvictionEvent::getByClient).setHeader("For").setAutoWidth(true);
@@ -121,8 +126,9 @@ public class DashboardView extends VerticalLayout {
         add(decks, new H3("Clients"), clientGrid);
     }
 
-    private record Snapshot(ai.strgm.dealer.api.model.DealerState dealer, String dealerError,
-            Map<String, ai.strgm.deck.api.model.DeckState> decks) {}
+    /** What one refresh read: DEALER's state, or why it couldn't be read, and each DECK server's state, or null if unreachable. */
+    private record Snapshot(ai.strgm.dealer.api.model.@Nullable DealerState dealer, @Nullable String dealerError,
+            Map<String, ai.strgm.deck.api.model.@Nullable DeckState> decks) {}
 
     @Override
     protected void onAttach(final AttachEvent event) {
@@ -151,7 +157,7 @@ public class DashboardView extends VerticalLayout {
         } catch (Exception exception) {
             error = exception.getMessage();
         }
-        final Map<String, ai.strgm.deck.api.model.DeckState> decks = new LinkedHashMap<>();
+        final Map<String, ai.strgm.deck.api.model.@Nullable DeckState> decks = new LinkedHashMap<>();
         clients.decks().forEach((deckName, api) -> {
             try {
                 decks.put(deckName, api.getDeckState().getBody());
@@ -165,25 +171,30 @@ public class DashboardView extends VerticalLayout {
     private void apply(final Snapshot snapshot) {
         final var dealerState = snapshot.dealer();
         if (dealerState != null) {
-            sessions.setItems(dealerState.getSessions());
-            queue.setItems(dealerState.getQueue());
-            evictions.setItems(dealerState.getEvictions().reversed());
-            clientGrid.setItems(dealerState.getClients());
-            dealerStatus.setText("DEALER: " + dealerState.getSessions().size() + " sessions, " + dealerState.getQueue().size() + " queued, "
-                    + dealerState.getEvictions().size() + " evictions · " + TIME.format(Instant.now()));
+            final var sessionInfos = orEmpty(dealerState.getSessions());
+            final var queuedRequests = orEmpty(dealerState.getQueue());
+            final var evictionEvents = orEmpty(dealerState.getEvictions());
+            sessions.setItems(sessionInfos);
+            queue.setItems(queuedRequests);
+            evictions.setItems(evictionEvents.reversed());
+            clientGrid.setItems(orEmpty(dealerState.getClients()));
+            dealerStatus.setText("DEALER: " + sessionInfos.size() + " sessions, " + queuedRequests.size() + " queued, "
+                    + evictionEvents.size() + " evictions · " + TIME.format(Instant.now()));
         } else {
             dealerStatus.setText("DEALER unreachable: " + snapshot.dealerError());
         }
         snapshot.decks().forEach((deckName, deck) -> {
+            final var statusLabel = requireNonNull(deckStatus.get(deckName), "every configured DECK server has a status label");
             if (deck == null) {
-                deckStatus.get(deckName).setText("unreachable");
+                statusLabel.setText("unreachable");
                 return;
             }
-            profileGrids.get(deckName).setItems(deck.getProfiles());
-            final List<Worker> workers = deck.getWorkers() == null ? List.of() : deck.getWorkers();
-            workerGrids.get(deckName).setItems(workers);
-            workerGrids.get(deckName).setVisible(!workers.isEmpty());
-            deckStatus.get(deckName).setText(deck.getImplementation().getValue()
+            requireNonNull(profileGrids.get(deckName), "every configured DECK server has a profile grid").setItems(deck.getProfiles());
+            final var workers = orEmpty(deck.getWorkers());
+            final var workerGrid = requireNonNull(workerGrids.get(deckName), "every configured DECK server has a worker grid");
+            workerGrid.setItems(workers);
+            workerGrid.setVisible(!workers.isEmpty());
+            statusLabel.setText(deck.getImplementation().getValue()
                     + (deck.getProvider() == null ? "" : " · provider " + deck.getProvider())
                     // TODO(#104): the spend's own currency, as for the session cost
                     + String.format(" · spend $%.6f", deck.getSpendUsd() == null ? 0 : deck.getSpendUsd()));
@@ -201,7 +212,12 @@ public class DashboardView extends VerticalLayout {
                 .collect(joining(", "));
     }
 
-    private static String seconds(final Long millis) {
+    /** A list the API may leave out, as an empty list when it does. */
+    private static <T> List<T> orEmpty(final @Nullable List<T> list) {
+        return list == null ? List.of() : list;
+    }
+
+    private static String seconds(final @Nullable Long millis) {
         return millis == null ? "-" : String.format("%.1f s", millis / MILLIS_PER_SECOND);
     }
 }

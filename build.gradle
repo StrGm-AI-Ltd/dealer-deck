@@ -29,8 +29,8 @@ subprojects {
 // NullAway checks the hand-written code's null safety at compile time: packages are @NullMarked (JSpecify), so a
 // type is non-null unless it's declared @Nullable. Two of Error Prone's checks guard the microtypes (the types
 // module): comparing a LeaseId with a String, or looking one up in a collection of the other, compiles but is
-// always false. Error Prone's other checks are off.
-configure(subprojects.findAll { it.name in ['types', 'deck', 'deck-openai', 'deck-stub', 'dealer'] }) {
+// always false. Error Prone's other checks are off. Every module is checked but `api`, whose code is all generated.
+configure(subprojects.findAll { it.name != 'api' }) {
     apply plugin: 'net.ltgt.errorprone'
     dependencies {
         errorprone 'com.google.errorprone:error_prone_core:2.52.0'
