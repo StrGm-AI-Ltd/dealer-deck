@@ -57,12 +57,6 @@ public class Scheduler {
     private static final Pattern AUTO = Pattern.compile("auto-(\\d+)k");
     /** An {@code auto-<N>k} model that isn't one of the {@link AutoTier}s needs N thousand tokens. */
     private static final int TOKENS_PER_K = 1000;
-    /** How long a request waits for its lease to become ready. */
-    private static final Duration READINESS_TIMEOUT = Duration.ofSeconds(90);
-    private static final long READINESS_POLL_MS = 150;
-    /** How many eviction events {@code /metrics/state} keeps. */
-    private static final int MAX_EVICTION_EVENTS = 50;
-    private static final long TICK_INTERVAL_MS = 500;
 
     public record Placement(Session session, ModelProfileRef profile, LeaseId leaseId) {}
 
@@ -220,7 +214,7 @@ public class Scheduler {
     /** Waits for the placement's lease to be ready, asking DECK until the session knows it is. */
     private void awaitReady(final Placement placement) {
         final var session = placement.session();
-        final var deadline = currentTimeMillis() + READINESS_TIMEOUT.toMillis();
+        final var deadline = currentTimeMillis() + Duration.ofSeconds(properties.timers().readinessTimeoutSeconds()).toMillis();
         while (currentTimeMillis() < deadline) {
             synchronized (lock) {
                 if (session.isReady()) {
@@ -234,7 +228,7 @@ public class Scheduler {
                 }
                 return;
             }
-            sleep(READINESS_POLL_MS);
+            sleep(properties.timers().readinessPollMillis());
         }
         throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", "Lease " + placement.leaseId() + " never became ready");
     }
@@ -363,7 +357,7 @@ public class Scheduler {
             evictions.addLast(new EvictionEvent().createdAt(Instant.ofEpochMilli(now).getEpochSecond()).victimClient(victim.client().name()).victimSession(victim.id())
                     .deckServer(target.server().name()).profileId(victimLease == null ? null : victimLease.profile().profile().getId()).byClient(leaseRequest.session().client().name())
                     .reason("priority " + leaseRequest.session().client().priority() + " > " + victim.client().priority() + " needs " + target.profile().getId()));
-            while (evictions.size() > MAX_EVICTION_EVENTS) {
+            while (evictions.size() > properties.evictionHistory()) {
                 evictions.removeFirst();
             }
             log.info("Evicting {} for {} (needs {})", victim.ref(), leaseRequest.session().ref(), target.key());
@@ -374,7 +368,7 @@ public class Scheduler {
     }
 
     /** Releases leases idle for longer than N, then re-dispatches (evictions wait for M to pass). */
-    @Scheduled(fixedDelay = TICK_INTERVAL_MS)
+    @Scheduled(fixedDelayString = "${dealer.timers.tick-millis}")
     public void tick() {
         synchronized (lock) {
             final var idleMs = Duration.ofSeconds(properties.timers().idleSeconds()).toMillis();

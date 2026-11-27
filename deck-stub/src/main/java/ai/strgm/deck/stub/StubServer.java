@@ -61,9 +61,6 @@ public class StubServer extends AbstractDeckServer {
     private static final int LEASES_PER_PROFILE = 1;
     /** The completion length when a request doesn't set {@code max_tokens}. */
     private static final int DEFAULT_MAX_TOKENS = 40;
-    /** How long a chat request waits for its lease to finish loading. */
-    private static final Duration LOADING_WAIT = Duration.ofSeconds(60);
-    private static final long LOADING_POLL_MS = 100;
     private static final double MILLIS_PER_SECOND = 1000.0;
     /** A worker's loaded profile, while a profile is loading onto it, is {@code loading <profile id>}. */
     private static final String LOADING_PREFIX = "loading ";
@@ -214,9 +211,9 @@ public class StubServer extends AbstractDeckServer {
         final var prompt = Json.promptTokens(request);
         final var speed = speedAt(profile, prompt);
         final StreamingResponseBody body = out -> {
-            final var deadline = currentTimeMillis() + LOADING_WAIT.toMillis();
+            final var deadline = currentTimeMillis() + Duration.ofSeconds(stub.loadingWaitSeconds()).toMillis();
             while (isLoading(lease) && currentTimeMillis() < deadline) {
-                sleep(LOADING_POLL_MS);
+                sleep(stub.loadingPollMillis());
             }
             sleep(scaled(profile.ttftMs()) + round(prompt * MILLIS_PER_SECOND / speed.prefillTps() * stub.timeFactor()));
             final var id = "chatcmpl-" + lease.id();

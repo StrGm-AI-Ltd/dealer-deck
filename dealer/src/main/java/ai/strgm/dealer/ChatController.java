@@ -37,18 +37,20 @@ import tools.jackson.databind.node.ObjectNode;
 public class ChatController {
     private final Scheduler scheduler;
     private final ObjectMapper mapper;
-    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
-    /** How long one completion may take, streaming included. */
-    private static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(5);
+    /** {@code X-Session-Id}'s maximum length: part of the API, as the {@code SessionId} schema documents it. */
     private static final int MAX_SESSION_ID_LENGTH = 200;
     /** The prefix of a server-sent event's data line. */
     private static final String SSE_DATA_PREFIX = "data:";
 
-    private final HttpClient http = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
+    private final HttpClient http;
+    /** How long one completion may take, streaming included. */
+    private final Duration requestTimeout;
 
-    public ChatController(final Scheduler scheduler, final ObjectMapper mapper) {
+    public ChatController(final Scheduler scheduler, final ObjectMapper mapper, final DealerProperties properties) {
         this.scheduler = scheduler;
         this.mapper = mapper;
+        this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(properties.timeouts().chatConnectSeconds())).build();
+        this.requestTimeout = Duration.ofMinutes(properties.timeouts().chatRequestMinutes());
     }
 
     @PostMapping("/v1/chat/completions")
@@ -99,7 +101,7 @@ public class ChatController {
                 .header("Authorization", "Bearer " + server.config().key())
                 .header("X-Lease-Id", placement.leaseId().value())
                 .header("Content-Type", "application/json")
-                .timeout(REQUEST_TIMEOUT)
+                .timeout(requestTimeout)
                 .POST(HttpRequest.BodyPublishers.ofString(forward.toString()));
         if (server.providerAuthorization() != null) {
             request.header("X-Provider-Authorization", server.providerAuthorization());

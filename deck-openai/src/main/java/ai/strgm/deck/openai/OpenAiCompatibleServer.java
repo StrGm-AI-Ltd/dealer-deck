@@ -52,13 +52,10 @@ import tools.jackson.databind.node.ObjectNode;
 public class OpenAiCompatibleServer extends AbstractDeckServer {
     /** Prices are per million tokens. */
     private static final double TOKENS_PER_MILLION = 1_000_000.0;
-    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
-    /** How long one completion may take, streaming included. */
-    private static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(5);
     /** The prefix of a server-sent event's data line. */
     private static final String SSE_DATA_PREFIX = "data:";
 
-    private final HttpClient http = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
+    private final HttpClient http;
     private final UpstreamProperties upstream;
     private final String prefix;
 
@@ -66,6 +63,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
             final ObjectMapper mapper) {
         super(properties, mapper);
         this.upstream = upstream;
+        this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(upstream.connectTimeoutSeconds())).build();
         this.prefix = upstream.idPrefix() == null ? upstream.provider() + "/" : upstream.idPrefix();
     }
 
@@ -152,7 +150,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
                 .header("Authorization", providerAuthorization)
                 .header("Content-Type", "application/json")
                 .header("Accept", "text/event-stream")
-                .timeout(REQUEST_TIMEOUT)
+                .timeout(Duration.ofMinutes(upstream.requestTimeoutMinutes()))
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .build();
         final var name = "Provider " + upstream.provider();

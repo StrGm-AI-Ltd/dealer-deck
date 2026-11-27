@@ -6,6 +6,9 @@ spring:
 vaadin:
   launch-browser: false
 ui:
+  refresh-millis: 1000
+  connect-timeout-seconds: 2
+  read-timeout-seconds: 5
   dealer:
     name: dealer
     url: http://localhost:8080

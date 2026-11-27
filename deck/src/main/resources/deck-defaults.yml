@@ -6,6 +6,8 @@ spring:
   mvc:
     async:
       request-timeout: 10m
+deck:
+  recent-leases: 30
 springdoc:
   swagger-ui:
     url: /openapi/deck.yaml

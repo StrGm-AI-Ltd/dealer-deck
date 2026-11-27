@@ -20,9 +20,6 @@ import tools.jackson.databind.ObjectMapper;
  * server's own capacity state, so a capacity check and the grant it allows happen together.
  */
 public abstract class AbstractDeckServer implements DeckServer {
-    /** How many of the most recent leases {@link #state()} reports. */
-    private static final int RECENT_LEASES = 30;
-
     protected final DeckProperties properties;
     protected final ObjectMapper mapper;
     /**
@@ -119,10 +116,10 @@ public abstract class AbstractDeckServer implements DeckServer {
         }
     }
 
-    /** The {@value #RECENT_LEASES} most recent leases, oldest first, for {@link #state()}. */
+    /** The most recent leases ({@code deck.recent-leases}), oldest first, for {@link #state()}. */
     protected List<Lease> recent() {
         final var all = all();
-        return all.subList(max(0, all.size() - RECENT_LEASES), all.size());
+        return all.subList(max(0, all.size() - properties.recentLeases()), all.size());
     }
 
     /**

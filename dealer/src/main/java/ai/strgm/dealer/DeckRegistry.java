@@ -33,10 +33,6 @@ import tools.jackson.databind.ObjectMapper;
 /** The configured DECK servers, called only through the clients generated from the DECK OpenAPI document. */
 @Component
 public class DeckRegistry {
-    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(2);
-    private static final Duration READ_TIMEOUT = Duration.ofSeconds(10);
-    /** How often DEALER refreshes every DECK server's model profiles. */
-    private static final long REFRESH_INTERVAL_MS = 1000;
 
 
     public record Server(DealerProperties.ServerDef config, ModelProfilesApi modelProfiles, LeasesApi leases,
@@ -79,8 +75,8 @@ public class DeckRegistry {
         this.mapper = mapper;
         for (final var serverConfig : properties.servers()) {
             final var requests = new SimpleClientHttpRequestFactory();
-            requests.setConnectTimeout(CONNECT_TIMEOUT);
-            requests.setReadTimeout(READ_TIMEOUT);
+            requests.setConnectTimeout(Duration.ofSeconds(properties.timeouts().deckConnectSeconds()));
+            requests.setReadTimeout(Duration.ofSeconds(properties.timeouts().deckReadSeconds()));
             final var restClient = RestClient.builder().requestFactory(requests).baseUrl(serverConfig.url())
                     .defaultHeader("Authorization", "Bearer " + serverConfig.key()).build();
             final var factory = HttpServiceProxyFactory.builderFor(RestClientAdapter.create(restClient)).build();
@@ -91,7 +87,7 @@ public class DeckRegistry {
         refresh();
     }
 
-    @Scheduled(fixedDelay = REFRESH_INTERVAL_MS)
+    @Scheduled(fixedDelayString = "${dealer.timers.deck-refresh-millis}")
     public void refresh() {
         final List<ModelProfileRef> next = new ArrayList<>();
         for (final var server : servers.values()) {

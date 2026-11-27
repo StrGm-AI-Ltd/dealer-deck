@@ -132,17 +132,35 @@ java -jar dealer/build/libs/dealer.jar                                  # :8080 
   - `dealer.servers`: each DECK server's URL, egress class (`local` or `external`, set by the operator,
     not by the server), DECK key and, for external servers, the environment variable holding the
     provider credential;
-  - `dealer.timers`: the minimum lease time before a lease can be evicted, and the idle time after which
-    a lease is released.
-- **DECK** (`application.yml` in `deck-stub` and `deck-openai`): the DECK key, the stub's time factor, and,
-  under `deck.upstream`, the provider (Nebius by default) and its models with their context
-  windows, prices, quantization and `max-leases` budgets. To serve a local oMLX model instead, for example:
+  - `dealer.timers`:
+    - the minimum lease time before a lease can be evicted;
+    - the idle time after which a lease is released;
+    - how long a request waits for its lease to be ready, and how often it asks DECK meanwhile;
+    - how often idle leases are released and the queue is dispatched;
+    - how often DEALER refreshes the DECK servers' model profiles;
+  - `dealer.timeouts`: the connect and read timeouts of DEALER's calls to DECK, and of a forwarded chat
+    request, whose time limit covers its whole stream;
+  - `dealer.eviction-history`: how many eviction events `/metrics/state` keeps.
+- **DECK** (`application.yml` in `deck-stub` and `deck-openai`, and the shared `deck-defaults.yml`):
+  - the DECK key;
+  - how many recent leases `/metrics/state` reports;
+  - for the stub: its time factor, and how long a chat request waits for a lease that's still loading;
+  - under `deck.upstream`: the provider (Nebius by default), its models with their context windows,
+    prices, quantization and `max-leases` budgets, and the timeouts of a chat request to the provider.
+
+  To serve a local oMLX model instead, for example:
 
   ```bash
   DECK_UPSTREAM_PROVIDER=omlx DECK_UPSTREAM_IMPLEMENTATION=local DECK_UPSTREAM_BASEURL=http://127.0.0.1:9191/v1/ \
   DECK_UPSTREAM_MODELS_0_MODEL=Qwen3.8-27B-graft DECK_UPSTREAM_MODELS_0_CONTEXTWINDOW=65536 DECK_UPSTREAM_MODELS_0_MAXLEASES=1 \
     java -jar deck-openai/build/libs/deck-openai.jar --server.port=8083 --deck.server-name=local
   ```
+
+- **DEALER UI** (`dealer-ui/src/main/resources/application.yml`): DEALER's and each DECK server's URL and key,
+  how often the page refreshes, and the timeouts of its calls.
+
+Every timeout, interval and limit has its default in these files, and can be overridden like any other key,
+e.g. `--dealer.timers.readiness-timeout-seconds=120`, without a rebuild.
 
 All keys in the configuration files are demo values. Override them with environment variables
 (`DECK_STUB_KEY`, `DECK_NEBIUS_KEY`, `DEALER_METRICS_KEY`) outside a demo.

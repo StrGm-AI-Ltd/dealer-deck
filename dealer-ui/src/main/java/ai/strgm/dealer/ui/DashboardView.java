@@ -31,12 +31,12 @@ import java.util.Map;
 @Route("")
 @PageTitle("DEALER + DECK")
 public class DashboardView extends VerticalLayout {
-    /** How often the browser asks for fresh metrics. */
-    private static final long REFRESH_INTERVAL_MS = 1000;
     private static final double MILLIS_PER_SECOND = 1000.0;
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault());
 
     private final Clients clients;
+    /** How often the browser asks for fresh metrics. */
+    private final int refreshMillis;
     private final Span status = new Span();
     private final Grid<QueuedRequest> queue = new Grid<>();
     private final Grid<SessionInfo> sessions = new Grid<>();
@@ -46,8 +46,9 @@ public class DashboardView extends VerticalLayout {
     private final Map<String, Grid<Worker>> workerGrids = new LinkedHashMap<>();
     private final Map<String, Span> deckStatus = new LinkedHashMap<>();
 
-    public DashboardView(final Clients clients) {
+    public DashboardView(final Clients clients, final UiProperties properties) {
         this.clients = clients;
+        this.refreshMillis = properties.refreshMillis();
         setWidthFull();
         getStyle().set("font-size", "1.1rem");
         add(new H1("DEALER + DECK: live view"), status);
@@ -124,7 +125,7 @@ public class DashboardView extends VerticalLayout {
         apply(fetch());
         // A browser-side timer calls tick() every second; each response carries the grid updates.
         getElement().executeJs("const el = $0; clearInterval(el.__dealerTimer);"
-                + " el.__dealerTimer = setInterval(() => el.$server.tick(), " + REFRESH_INTERVAL_MS + ");", getElement());
+                + " el.__dealerTimer = setInterval(() => el.$server.tick(), " + refreshMillis + ");", getElement());
     }
 
     @Override

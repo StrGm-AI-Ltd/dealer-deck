@@ -25,6 +25,8 @@ components:
     SessionId:
       type: string
       description: An agent session's id, as a client sends it in `X-Session-Id`; unique within the client
+      minLength: 1
+      maxLength: 200
       example: a-1
     ModelName:
       type: string
