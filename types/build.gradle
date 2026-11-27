@@ -15,4 +15,8 @@ dependencyManagement {
 dependencies {
     api 'com.fasterxml.jackson.core:jackson-annotations'
     api 'org.jspecify:jspecify'
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
+
+tasks.named('test') { useJUnitPlatform() }
