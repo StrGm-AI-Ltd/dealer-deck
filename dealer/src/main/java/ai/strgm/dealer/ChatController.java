@@ -43,8 +43,6 @@ import tools.jackson.databind.node.ObjectNode;
 public class ChatController {
     private final Scheduler scheduler;
     private final ObjectMapper mapper;
-    /** {@code X-Session-Id}'s maximum length: part of the API, as the {@code SessionId} schema documents it. */
-    private static final int MAX_SESSION_ID_LENGTH = 200;
     /** The prefix of a server-sent event's data line. */
     private static final String SSE_DATA_PREFIX = "data:";
 
@@ -61,7 +59,7 @@ public class ChatController {
 
     @PostMapping("/v1/chat/completions")
     public ResponseEntity<StreamingResponseBody> chat(@RequestBody final String rawBody,
-            @RequestHeader(value = "X-Session-Id", required = false) final @Nullable String sessionId,
+            @RequestHeader(value = "X-Session-Id", required = false) final @Nullable String sessionIdHeader,
             @RequestHeader(value = "X-Request-Priority", required = false) final @Nullable Integer requestPriority,
             final HttpServletRequest servletRequest) {
         final var clientConfig = (ClientConfig) servletRequest.getAttribute(AuthFilter.CLIENT_CONFIG_ATTRIBUTE);
@@ -77,8 +75,14 @@ public class ChatController {
         if (!(body.path("stream").isBoolean() && body.path("stream").booleanValue())) {
             throw new ApiException(BAD_REQUEST, "invalid_request_error", "DEALER streams only in v0.5: set \"stream\": true");
         }
-        if (sessionId == null || sessionId.isBlank() || sessionId.length() > MAX_SESSION_ID_LENGTH) {
-            throw new ApiException(BAD_REQUEST, "invalid_request_error", "Missing or invalid required header X-Session-Id");
+        if (sessionIdHeader == null) {
+            throw invalidSessionId();
+        }
+        final SessionId sessionId;
+        try {
+            sessionId = new SessionId(sessionIdHeader);
+        } catch (IllegalArgumentException exception) {
+            throw invalidSessionId();
         }
         final Priority priority;
         try {
@@ -98,7 +102,7 @@ public class ChatController {
                     "No DECK profile serves \"" + modelName + "\" for client " + clientConfig.name()
                             + (clientConfig.externalRouting() ? "" : " (external routing is off for this client)"));
         }
-        final var placement = scheduler.acquire(clientConfig, new SessionId(sessionId), modelName, priority);
+        final var placement = scheduler.acquire(clientConfig, sessionId, modelName, priority);
         final var serverRef = placement.profileRef().serverRef();
         final var upstreamBody = (ObjectNode) body.deepCopy();
         upstreamBody.put("model", placement.profileRef().profile().getModel().value());
@@ -178,6 +182,10 @@ public class ChatController {
                 .header("X-Dealer-Server", serverRef.name().value())
                 .header("X-Dealer-Profile", placement.profileRef().profile().getId().value())
                 .body(stream);
+    }
+
+    private static ApiException invalidSessionId() {
+        return new ApiException(BAD_REQUEST, "invalid_request_error", "Missing or invalid required header X-Session-Id");
     }
 
     private static long number(final JsonNode node) {
