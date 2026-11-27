@@ -45,6 +45,8 @@ public class ChatController {
         if (!Json.bool(request.path("stream"))) {
             throw new ApiException(BAD_REQUEST, "invalid_request_error", "Streaming only: set \"stream\": true");
         }
-        return ResponseEntity.ok().contentType(TEXT_EVENT_STREAM).body(server.chat(new LeaseId(leaseId), providerAuthorization, request));
+        final var chatStream = server.chat(new LeaseId(leaseId), providerAuthorization, request);
+        final StreamingResponseBody stream = chatStream::writeTo;
+        return ResponseEntity.ok().contentType(TEXT_EVENT_STREAM).body(stream);
     }
 }

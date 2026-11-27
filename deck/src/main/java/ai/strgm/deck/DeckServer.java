@@ -8,7 +8,6 @@ import ai.strgm.types.ProfileId;
 import ai.strgm.types.SessionRef;
 import java.util.List;
 import org.jspecify.annotations.Nullable;
-import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -36,6 +35,9 @@ public interface DeckServer {
 
     DeckState state();
 
-    /** Streams the completion; throws {@link ApiException} or {@link UpstreamException} before streaming starts. */
-    StreamingResponseBody chat(LeaseId leaseId, @Nullable String providerAuthorization, JsonNode request);
+    /**
+     * Opens the completion on lease {@code leaseId}, with the provider credential to forward, if the server needs one.
+     * Throws before streaming starts if the lease isn't active or the provider refuses the request.
+     */
+    ChatStream chat(LeaseId leaseId, @Nullable String providerAuthorization, JsonNode request);
 }

@@ -2,23 +2,16 @@ package ai.strgm.deck.openai;
 
 import static ai.strgm.util.Nulls.mapNullable;
 import static java.lang.Math.max;
-import static java.lang.Thread.currentThread;
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static org.springframework.http.HttpStatus.BAD_GATEWAY;
-import static org.springframework.http.HttpStatus.BAD_REQUEST;
-import static org.springframework.http.HttpStatus.CONFLICT;
-import static org.springframework.http.HttpStatus.GATEWAY_TIMEOUT;
-import static org.springframework.http.HttpStatus.OK;
-import static org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
-import static org.springframework.http.HttpStatus.TOO_MANY_REQUESTS;
-import static org.springframework.http.HttpStatus.UNAUTHORIZED;
 
 import ai.strgm.deck.AbstractDeckServer;
-import ai.strgm.deck.ApiException;
+import ai.strgm.deck.ChatStream;
 import ai.strgm.deck.DeckProperties;
 import ai.strgm.deck.Json;
+import ai.strgm.deck.LeaseConflictException;
 import ai.strgm.deck.LeaseRecord;
-import ai.strgm.deck.UpstreamException;
+import ai.strgm.deck.ProviderCredentialMissingException;
+import ai.strgm.deck.UnknownProfileException;
 import ai.strgm.deck.api.model.DeckState;
 import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseState;
@@ -35,17 +28,9 @@ import ai.strgm.types.ProfileId;
 import ai.strgm.types.SessionRef;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
 import java.util.List;
 import org.jspecify.annotations.Nullable;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
-import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
@@ -64,15 +49,15 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
     /** The prefix of a server-sent event's data line. */
     private static final String SSE_DATA_PREFIX = "data:";
 
-    private final HttpClient http;
+    private final ProviderClient providerClient;
     private final UpstreamProperties upstreamProperties;
     private final String prefix;
 
     public OpenAiCompatibleServer(final DeckProperties properties, final UpstreamProperties upstreamProperties,
-            final ObjectMapper mapper) {
+            final ProviderClient providerClient, final ObjectMapper mapper) {
         super(properties, mapper);
         this.upstreamProperties = upstreamProperties;
-        this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(upstreamProperties.connectTimeoutSeconds())).build();
+        this.providerClient = providerClient;
         this.prefix = upstreamProperties.idPrefix() == null ? upstreamProperties.provider() + "/" : upstreamProperties.idPrefix();
     }
 
@@ -80,7 +65,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
         return upstreamProperties.models().stream()
                 .filter(upstreamModel -> profileId(upstreamModel).equals(profileId))
                 .findFirst()
-                .orElseThrow(() -> unknownProfile(profileId));
+                .orElseThrow(() -> new UnknownProfileException(profileId));
     }
 
     /** A model's profile id, which is also the model name DEALER's clients request: the provider's name, prefixed. */
@@ -110,8 +95,8 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
         final var upstreamModel = model(profileId);
         final var activeLeaseIds = activeLeaseIds(profileId);
         if (upstreamModel.maxLeases() != null && activeLeaseIds.size() >= upstreamModel.maxLeases()) {
-            throw new ApiException(CONFLICT, "lease_conflict",
-                    "The instance budget of " + profileId + " (" + upstreamModel.maxLeases() + ") is in use", activeLeaseIds);
+            throw new LeaseConflictException("The instance budget of " + profileId + " (" + upstreamModel.maxLeases() + ") is in use",
+                    activeLeaseIds);
         }
         return register(profileId, sessionRef, LeaseState.READY);
     }
@@ -143,10 +128,9 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
     }
 
     @Override
-    public StreamingResponseBody chat(final LeaseId leaseId, final @Nullable String providerAuthorization, final JsonNode request) {
+    public ChatStream chat(final LeaseId leaseId, final @Nullable String providerAuthorization, final JsonNode request) {
         if (providerAuthorization == null || providerAuthorization.isBlank()) {
-            throw new ApiException(UNAUTHORIZED, "authentication_error",
-                    "Missing X-Provider-Authorization: this DECK server forwards the provider credential it receives (D104)");
+            throw new ProviderCredentialMissingException();
         }
         final var leaseRecord = activeRecord(leaseId);
         final var upstreamModel = model(leaseRecord.profileId());
@@ -154,47 +138,12 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
         upstreamBody.put("model", upstreamModel.model().value());
         upstreamBody.put("stream", true);
         upstreamBody.putObject("stream_options").put("include_usage", true);
-        final var baseUrl = upstreamProperties.baseUrl().endsWith("/") ? upstreamProperties.baseUrl() : upstreamProperties.baseUrl() + "/";
-        final var upstreamRequest = HttpRequest.newBuilder(URI.create(baseUrl + "chat/completions"))
-                .header("Authorization", providerAuthorization)
-                .header("Content-Type", "application/json")
-                .header("Accept", "text/event-stream")
-                .timeout(Duration.ofMinutes(upstreamProperties.requestTimeoutMinutes()))
-                .POST(HttpRequest.BodyPublishers.ofString(upstreamBody.toString()))
-                .build();
-        final var providerLabel = "Provider " + upstreamProperties.provider();
-        final HttpResponse<java.io.InputStream> response;
-        try {
-            response = http.send(upstreamRequest, HttpResponse.BodyHandlers.ofInputStream());
-        } catch (Exception exception) {
-            if (exception instanceof InterruptedException) {
-                currentThread().interrupt();
-            }
-            throw new ApiException(GATEWAY_TIMEOUT, "upstream_error", providerLabel + " unreachable: " + exception.getMessage());
-        }
-        if (response.statusCode() != OK.value()) {
-            final String text;
-            try (var responseBody = response.body()) {
-                text = new String(responseBody.readAllBytes(), UTF_8);
-            } catch (Exception exception) {
-                throw new ApiException(BAD_GATEWAY, "upstream_error", providerLabel + " error " + response.statusCode());
-            }
-            final var upstreamStatus = HttpStatus.resolve(response.statusCode());
-            final var responseStatus = upstreamStatus == null ? SERVICE_UNAVAILABLE : switch (upstreamStatus) {
-                case TOO_MANY_REQUESTS -> TOO_MANY_REQUESTS;
-                case UNAUTHORIZED, FORBIDDEN -> UNAUTHORIZED;
-                case BAD_REQUEST, NOT_FOUND, UNPROCESSABLE_CONTENT -> BAD_REQUEST;
-                default -> SERVICE_UNAVAILABLE;
-            };
-            throw new UpstreamException(responseStatus, text.isBlank() ? "{\"error\":{\"message\":\"" + providerLabel + " error "
-                    + response.statusCode() + "\",\"type\":\"upstream_error\"}}" : text,
-                    response.headers().firstValue("Retry-After").orElse(null));
-        }
+        final var providerEvents = providerClient.openChat(providerAuthorization, upstreamBody.toString());
         final var promptTokens = Json.promptTokens(request);
-        final StreamingResponseBody stream = out -> {
+        final ChatStream stream = out -> {
             boolean sawUsage = false;
             long completionChars = 0;
-            try (var reader = new BufferedReader(new InputStreamReader(response.body(), UTF_8))) {
+            try (var reader = new BufferedReader(new InputStreamReader(providerEvents, UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     if (line.startsWith(SSE_DATA_PREFIX)) {

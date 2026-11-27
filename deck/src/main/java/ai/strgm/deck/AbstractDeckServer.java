@@ -1,8 +1,6 @@
 package ai.strgm.deck;
 
 import static java.lang.Math.max;
-import static org.springframework.http.HttpStatus.CONFLICT;
-import static org.springframework.http.HttpStatus.NOT_FOUND;
 
 import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseState;
@@ -37,14 +35,10 @@ public abstract class AbstractDeckServer implements DeckServer {
         this.mapper = mapper;
     }
 
-    protected static ApiException unknownProfile(final ProfileId profileId) {
-        return new ApiException(NOT_FOUND, "not_found", "Unknown profile: " + profileId);
-    }
-
     private LeaseRecord record(final LeaseId leaseId) {
         final var leaseRecord = leases.get(leaseId);
         if (leaseRecord == null) {
-            throw new ApiException(NOT_FOUND, "not_found", "Unknown lease: " + leaseId);
+            throw new UnknownLeaseException(leaseId);
         }
         return leaseRecord;
     }
@@ -54,7 +48,7 @@ public abstract class AbstractDeckServer implements DeckServer {
         synchronized (lock) {
             final var leaseRecord = record(leaseId);
             if (!leaseRecord.active()) {
-                throw new ApiException(CONFLICT, "lease_inactive", "Lease " + leaseId + " is " + leaseRecord.state().getValue());
+                throw new LeaseInactiveException(leaseId, leaseRecord.state());
             }
             return leaseRecord;
         }

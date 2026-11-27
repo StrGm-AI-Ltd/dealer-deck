@@ -6,13 +6,14 @@ import static java.lang.Math.round;
 import static java.lang.System.currentTimeMillis;
 import static java.lang.Thread.currentThread;
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static org.springframework.http.HttpStatus.CONFLICT;
 
 import ai.strgm.deck.AbstractDeckServer;
-import ai.strgm.deck.ApiException;
+import ai.strgm.deck.ChatStream;
 import ai.strgm.deck.DeckProperties;
 import ai.strgm.deck.Json;
+import ai.strgm.deck.LeaseConflictException;
 import ai.strgm.deck.LeaseRecord;
+import ai.strgm.deck.UnknownProfileException;
 import ai.strgm.deck.api.model.DeckState;
 import ai.strgm.deck.api.model.Implementation;
 import ai.strgm.deck.api.model.LeaseReduction;
@@ -36,9 +37,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.jspecify.annotations.Nullable;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
-import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -97,7 +96,7 @@ public class StubServer extends AbstractDeckServer {
         return PROFILE_DEFS.stream()
                 .filter(definition -> definition.id().equals(id))
                 .findFirst()
-                .orElseThrow(() -> unknownProfile(id));
+                .orElseThrow(() -> new UnknownProfileException(id));
     }
 
     private boolean overlaps(final ProfileDef first, final ProfileDef second) {
@@ -164,8 +163,7 @@ public class StubServer extends AbstractDeckServer {
                 .map(LeaseRecord::id)
                 .toList();
         if (!blockers.isEmpty()) {
-            throw new ApiException(CONFLICT, "lease_conflict",
-                    "Profile " + profileId + " is blocked by active leases", blockers);
+            throw new LeaseConflictException("Profile " + profileId + " is blocked by active leases", blockers);
         }
         final var isLoaded = profileDef.workers().stream()
                 .allMatch(worker -> profileDef.id().value().equals(loaded.get(worker)));
@@ -203,7 +201,7 @@ public class StubServer extends AbstractDeckServer {
     }
 
     @Override
-    public StreamingResponseBody chat(final LeaseId leaseId, final @Nullable String providerAuthorization, final JsonNode request) {
+    public ChatStream chat(final LeaseId leaseId, final @Nullable String providerAuthorization, final JsonNode request) {
         final var leaseRecord = activeRecord(leaseId);
         final var profileDef = profileDefFor(leaseRecord.profileId());
         final var maxTokens = (int) max(1, min(Json.number(request.path("max_tokens")) == 0 ? DEFAULT_MAX_TOKENS
@@ -211,7 +209,7 @@ public class StubServer extends AbstractDeckServer {
         final var includeUsage = Json.bool(request.path("stream_options").path("include_usage"));
         final var promptTokens = Json.promptTokens(request);
         final var speed = speedAt(profileDef, promptTokens);
-        final StreamingResponseBody body = out -> {
+        final ChatStream body = out -> {
             final var deadline = currentTimeMillis() + Duration.ofSeconds(stubProperties.loadingWaitSeconds()).toMillis();
             while (isLoading(leaseRecord) && currentTimeMillis() < deadline) {
                 sleep(stubProperties.loadingPollMillis());

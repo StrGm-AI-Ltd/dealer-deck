@@ -3,9 +3,15 @@ package ai.strgm.deck;
 import static ai.strgm.util.Nulls.mapNullable;
 import static java.util.Comparator.comparing;
 import static java.util.stream.Collectors.joining;
+import static org.springframework.http.HttpStatus.BAD_GATEWAY;
 import static org.springframework.http.HttpStatus.BAD_REQUEST;
+import static org.springframework.http.HttpStatus.CONFLICT;
+import static org.springframework.http.HttpStatus.GATEWAY_TIMEOUT;
 import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
 import static org.springframework.http.HttpStatus.NOT_FOUND;
+import static org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
+import static org.springframework.http.HttpStatus.TOO_MANY_REQUESTS;
+import static org.springframework.http.HttpStatus.UNAUTHORIZED;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 
 import ai.strgm.deck.api.model.ErrorBody;
@@ -57,23 +63,57 @@ public class Errors extends ResponseEntityExceptionHandler {
         return exception.getMessage() != null ? exception.getMessage() : exception.getClass().getSimpleName();
     }
 
-    @ExceptionHandler(UpstreamException.class)
-    public ResponseEntity<String> handle(final UpstreamException exception) {
-        final var response = ResponseEntity.status(exception.status).contentType(APPLICATION_JSON);
+    @ExceptionHandler(ApiException.class)
+    public ResponseEntity<Object> handle(final ApiException exception) {
+        return of(exception.status, exception.type, message(exception), null);
+    }
+
+    @ExceptionHandler({UnknownProfileException.class, UnknownLeaseException.class})
+    public ResponseEntity<Object> handleUnknown(final RuntimeException exception) {
+        return of(NOT_FOUND, "not_found", message(exception), null);
+    }
+
+    @ExceptionHandler(LeaseInactiveException.class)
+    public ResponseEntity<Object> handle(final LeaseInactiveException exception) {
+        return of(CONFLICT, "lease_inactive", message(exception), null);
+    }
+
+    @ExceptionHandler(LeaseConflictException.class)
+    public ResponseEntity<Object> handle(final LeaseConflictException exception) {
+        return ResponseEntity.status(CONFLICT).contentType(APPLICATION_JSON)
+                .body(new LeaseConflict(new ErrorBody(message(exception), "lease_conflict"), exception.blockers));
+    }
+
+    @ExceptionHandler(ProviderCredentialMissingException.class)
+    public ResponseEntity<Object> handle(final ProviderCredentialMissingException exception) {
+        return of(UNAUTHORIZED, "authentication_error",
+                "Missing X-Provider-Authorization: this DECK server forwards the provider credential it receives (D104)", null);
+    }
+
+    @ExceptionHandler(ProviderUnreachableException.class)
+    public ResponseEntity<Object> handle(final ProviderUnreachableException exception) {
+        return of(GATEWAY_TIMEOUT, "upstream_error", message(exception), null);
+    }
+
+    /** The provider's own error, passed on with its body and any Retry-After, under the status its reason maps to. */
+    @ExceptionHandler(ProviderErrorException.class)
+    public ResponseEntity<Object> handle(final ProviderErrorException exception) {
+        final var status = switch (exception.reason) {
+            case RATE_LIMITED -> TOO_MANY_REQUESTS;
+            case CREDENTIAL_REJECTED -> UNAUTHORIZED;
+            case REQUEST_REJECTED -> BAD_REQUEST;
+            case UNAVAILABLE -> SERVICE_UNAVAILABLE;
+            case UNREADABLE -> BAD_GATEWAY;
+        };
+        if (exception.reason == ProviderErrorException.Reason.UNREADABLE) {
+            return of(status, "upstream_error", message(exception), null);
+        }
+        final var response = ResponseEntity.status(status).contentType(APPLICATION_JSON);
         if (exception.retryAfter != null) {
             response.header("Retry-After", exception.retryAfter);
         }
-        return response.body(exception.body);
-    }
-
-    @ExceptionHandler(ApiException.class)
-    public ResponseEntity<Object> handle(final ApiException exception) {
-        final var blockers = exception.blockers;
-        if (blockers != null) {
-            return ResponseEntity.status(exception.status).contentType(APPLICATION_JSON)
-                    .body(new LeaseConflict(new ErrorBody(message(exception), exception.type), blockers));
-        }
-        return of(exception.status, exception.type, message(exception), null);
+        return response.body(exception.body.isBlank()
+                ? "{\"error\":{\"message\":\"" + message(exception) + "\",\"type\":\"upstream_error\"}}" : exception.body);
     }
 
     /** A parameter outside its documented constraints, from method validation. */
