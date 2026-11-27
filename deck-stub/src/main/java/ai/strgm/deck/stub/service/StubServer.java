@@ -30,6 +30,8 @@ import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.ProfileId;
 import ai.strgm.types.SessionRef;
+import java.io.IOException;
+import java.io.OutputStream;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -253,7 +255,7 @@ public class StubServer extends AbstractDeckServer {
         return chatStream;
     }
 
-    private static void writeEvent(final java.io.OutputStream out, final String json) throws java.io.IOException {
+    private static void writeEvent(final OutputStream out, final String json) throws IOException {
         out.write(("data: " + json + "\n\n").getBytes(UTF_8));
         out.flush();
     }

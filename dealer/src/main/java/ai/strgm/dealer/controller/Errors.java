@@ -9,12 +9,11 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 import static org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 
-import ai.strgm.dealer.api.model.ErrorBody;
-import ai.strgm.dealer.api.model.ErrorResponse;
 import ai.strgm.dealer.exception.DeckErrorException;
 import ai.strgm.dealer.exception.DeckUnreachableException;
 import ai.strgm.dealer.exception.LeaseUnavailableException;
 import ai.strgm.dealer.exception.ModelNotFoundException;
+import ai.strgm.dealer.mapper.DealerApiMapper;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.jspecify.annotations.Nullable;
@@ -26,6 +25,7 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
@@ -50,7 +50,7 @@ public class Errors extends ResponseEntityExceptionHandler {
     private static ResponseEntity<Object> errorResponse(final HttpStatusCode status, final String type, final String message,
             final @Nullable String param) {
         return ResponseEntity.status(status).contentType(APPLICATION_JSON)
-                .body(new ErrorResponse(new ErrorBody(message, type).param(param)));
+                .body(DealerApiMapper.errorResponse(message, type, param));
     }
 
     private static ResponseEntity<Object> invalidRequest(final HttpStatusCode status, final String message, final @Nullable String param) {
@@ -174,9 +174,9 @@ public class Errors extends ResponseEntityExceptionHandler {
             final HttpHeaders headers, final HttpStatusCode status, final WebRequest request) {
         final var type = status.isSameCodeAs(NOT_FOUND) ? "not_found" : status.is4xxClientError() ? "invalid_request_error" : "server_error";
         final var detail = exception instanceof NoResourceFoundException noResource ? "Unknown path: /" + noResource.getResourcePath()
-                : exception instanceof org.springframework.web.ErrorResponse errorResponse ? errorResponse.getBody().getDetail() : null;
+                : exception instanceof ErrorResponse errorResponse ? errorResponse.getBody().getDetail() : null;
         final var message = detail != null ? detail : HttpStatus.valueOf(status.value()).getReasonPhrase();
         return ResponseEntity.status(status).headers(headers).contentType(APPLICATION_JSON)
-                .body(new ErrorResponse(new ErrorBody(message, type)));
+                .body(DealerApiMapper.errorResponse(message, type, null));
     }
 }

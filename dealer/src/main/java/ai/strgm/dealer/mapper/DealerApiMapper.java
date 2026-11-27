@@ -7,6 +7,8 @@ import ai.strgm.dealer.model.DealerSnapshot;
 import ai.strgm.dealer.model.DealerSnapshot.ServerStatus;
 import ai.strgm.dealer.api.model.ClientInfo;
 import ai.strgm.dealer.api.model.DealerState;
+import ai.strgm.dealer.api.model.ErrorBody;
+import ai.strgm.dealer.api.model.ErrorResponse;
 import ai.strgm.dealer.api.model.EvictionEvent;
 import ai.strgm.dealer.api.model.Model;
 import ai.strgm.dealer.api.model.ModelList;
@@ -20,6 +22,7 @@ import ai.strgm.dealer.model.SessionSnapshot;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import org.jspecify.annotations.Nullable;
 
 /** Maps DEALER's domain objects to the models generated from the DEALER OpenAPI document (D144). */
 public final class DealerApiMapper {
@@ -53,6 +56,11 @@ public final class DealerApiMapper {
                 .evictions(snapshot.evictions().stream()
                         .map(DealerApiMapper::evictionEvent)
                         .toList());
+    }
+
+    /** The documented error body; {@code param} names the offending field or header, if any. */
+    public static ErrorResponse errorResponse(final String message, final String type, final @Nullable String param) {
+        return new ErrorResponse(new ErrorBody(message, type).param(param));
     }
 
     // TODO(#62): report each client's DECK servers and model profiles instead of its external-routing flag

@@ -5,11 +5,14 @@ import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.joining;
 
 import ai.strgm.dealer.api.model.ClientInfo;
+import ai.strgm.dealer.api.model.DealerState;
 import ai.strgm.dealer.api.model.EvictionEvent;
 import ai.strgm.dealer.api.model.QueuedRequest;
 import ai.strgm.dealer.api.model.SessionInfo;
-import ai.strgm.dealer.ui.client.Clients;
+import ai.strgm.dealer.ui.client.DealerClient;
+import ai.strgm.dealer.ui.client.DeckClients;
 import ai.strgm.dealer.ui.config.UiProperties;
+import ai.strgm.deck.api.model.DeckState;
 import ai.strgm.deck.api.model.Limitations;
 import ai.strgm.deck.api.model.ModelProfile;
 import ai.strgm.deck.api.model.Readiness;
@@ -40,7 +43,8 @@ public class DashboardView extends VerticalLayout {
     private static final double MILLIS_PER_SECOND = 1000.0;
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault());
 
-    private final Clients clients;
+    private final DealerClient dealerClient;
+    private final DeckClients deckClients;
     /** How often the browser asks for fresh metrics. */
     private final int refreshMillis;
     private final Span dealerStatus = new Span();
@@ -52,8 +56,9 @@ public class DashboardView extends VerticalLayout {
     private final Map<String, Grid<Worker>> workerGrids = new LinkedHashMap<>();
     private final Map<String, Span> deckStatus = new LinkedHashMap<>();
 
-    public DashboardView(final Clients clients, final UiProperties properties) {
-        this.clients = clients;
+    public DashboardView(final DealerClient dealerClient, final DeckClients deckClients, final UiProperties properties) {
+        this.dealerClient = dealerClient;
+        this.deckClients = deckClients;
         this.refreshMillis = properties.refreshMillis();
         setWidthFull();
         getStyle().set("font-size", "1.1rem");
@@ -101,7 +106,7 @@ public class DashboardView extends VerticalLayout {
         add(new H3("Sessions and leases"), sessions, new H3("Queue"), queue, new H3("Evictions"), evictions);
         final var decks = new HorizontalLayout();
         decks.setWidthFull();
-        clients.deckMetricsApis().keySet().forEach(deckName -> {
+        deckClients.metricsApis().keySet().forEach(deckName -> {
             final var profiles = new Grid<ModelProfile>();
             profiles.addColumn(ModelProfile::getId).setHeader("Profile").setAutoWidth(true);
             profiles.addColumn(profile -> profile.getReadiness().getValue() + (profile.getReadiness() != Readiness.UNLOADED || profile.getLoadingTimeMs() == null
@@ -127,8 +132,7 @@ public class DashboardView extends VerticalLayout {
     }
 
     /** What one refresh read: DEALER's state, or why it couldn't be read, and each DECK server's state, or null if unreachable. */
-    private record Snapshot(ai.strgm.dealer.api.model.@Nullable DealerState dealer, @Nullable String dealerError,
-            Map<String, ai.strgm.deck.api.model.@Nullable DeckState> decks) {}
+    private record Snapshot(@Nullable DealerState dealer, @Nullable String dealerError, Map<String, @Nullable DeckState> decks) {}
 
     @Override
     protected void onAttach(final AttachEvent event) {
@@ -150,17 +154,17 @@ public class DashboardView extends VerticalLayout {
 
     /** Reads the metrics APIs off the UI lock; {@link #apply} then updates the grids under it. */
     private Snapshot fetchSnapshot() {
-        ai.strgm.dealer.api.model.DealerState dealer = null;
+        DealerState dealer = null;
         String error = null;
         try {
-            dealer = clients.dealerMetricsApi().getDealerState().getBody();
+            dealer = dealerClient.metricsApi().getDealerState().getBody();
         } catch (Exception exception) {
             error = exception.getMessage();
         }
-        final Map<String, ai.strgm.deck.api.model.@Nullable DeckState> decks = new LinkedHashMap<>();
-        clients.deckMetricsApis().forEach((deckName, api) -> {
+        final Map<String, @Nullable DeckState> decks = new LinkedHashMap<>();
+        deckClients.metricsApis().forEach((deckName, metricsApi) -> {
             try {
-                decks.put(deckName, api.getDeckState().getBody());
+                decks.put(deckName, metricsApi.getDeckState().getBody());
             } catch (Exception exception) {
                 decks.put(deckName, null);
             }

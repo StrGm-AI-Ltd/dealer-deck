@@ -3,7 +3,10 @@ package ai.strgm.deck.mapper;
 import static ai.strgm.util.Nulls.mapNullable;
 
 import ai.strgm.deck.api.model.DeckState;
+import ai.strgm.deck.api.model.ErrorBody;
+import ai.strgm.deck.api.model.ErrorResponse;
 import ai.strgm.deck.api.model.Lease;
+import ai.strgm.deck.api.model.LeaseConflict;
 import ai.strgm.deck.api.model.LeaseReduction;
 import ai.strgm.deck.api.model.Limitations;
 import ai.strgm.deck.api.model.ModelProfile;
@@ -18,6 +21,9 @@ import ai.strgm.deck.model.LeaseSnapshot;
 import ai.strgm.deck.model.OfferedProfile;
 import ai.strgm.deck.model.OfferedProfiles;
 import ai.strgm.deck.model.ServerState;
+import ai.strgm.types.LeaseId;
+import java.util.List;
+import org.jspecify.annotations.Nullable;
 
 /** Maps DECK's domain objects to the models generated from the DECK OpenAPI document (D144). */
 public final class DeckApiMapper {
@@ -28,6 +34,16 @@ public final class DeckApiMapper {
         return new ModelProfiles(offeredProfiles.serverName(), offeredProfiles.implementation(), offeredProfiles.profiles().stream()
                 .map(DeckApiMapper::modelProfile)
                 .toList());
+    }
+
+    /** The documented error body; {@code param} names the offending field or header, if any. */
+    public static ErrorResponse errorResponse(final String message, final String type, final @Nullable String param) {
+        return new ErrorResponse(new ErrorBody(message, type).param(param));
+    }
+
+    /** A lease conflict's body: the error, and the leases that block the request. */
+    public static LeaseConflict leaseConflict(final String message, final String type, final List<LeaseId> blockers) {
+        return new LeaseConflict(new ErrorBody(message, type), blockers);
     }
 
     public static Lease lease(final LeaseSnapshot lease) {
