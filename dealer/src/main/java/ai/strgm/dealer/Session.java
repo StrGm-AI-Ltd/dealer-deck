@@ -9,7 +9,6 @@ import ai.strgm.dealer.DealerProperties.ClientConfig;
 import ai.strgm.dealer.DeckRegistry.DeckServerRef;
 import ai.strgm.dealer.DeckRegistry.ModelProfileRef;
 import ai.strgm.dealer.Scheduler.Placement;
-import ai.strgm.dealer.api.model.SessionInfo;
 import ai.strgm.dealer.api.model.SessionLeaseState;
 import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseState;
@@ -205,15 +204,14 @@ final class Session {
         return clearedLease;
     }
 
-    SessionInfo toInfo(final long now) {
-        return new SessionInfo().client(clientConfig.name()).sessionId(id).model(modelName)
-                .deckServer(mapNullable(heldLease, currentLease -> currentLease.profileRef().serverRef().name()))
-                .serverType(mapNullable(heldLease, currentLease -> currentLease.profileRef().serverRef().config().egress()))
-                .profileId(mapNullable(heldLease, currentLease -> currentLease.profileRef().profile().getId()))
-                .leaseId(mapNullable(heldLease, HeldLease::id))
-                .leaseState(leaseState).leaseAgeMs(heldLease == null || leaseReadyAt == 0 ? null : now - leaseReadyAt)
-                .idleMs(inFlight > 0 ? 0L : now - lastActivity).inFlight(inFlight).evictPending(evictPending)
-                .requests(requests).promptTokens(promptTokens).cachedTokens(cachedTokens)
-                .completionTokens(completionTokens).costUsd(costUsd);
+    /** The session's state at {@code now}, for the scheduler's report. */
+    SessionSnapshot snapshot(final long now) {
+        return new SessionSnapshot(clientConfig.name(), id, modelName,
+                mapNullable(heldLease, currentLease -> currentLease.profileRef().serverRef().name()),
+                mapNullable(heldLease, currentLease -> currentLease.profileRef().serverRef().config().egress()),
+                mapNullable(heldLease, currentLease -> currentLease.profileRef().profile().getId()),
+                mapNullable(heldLease, HeldLease::id),
+                leaseState, heldLease == null || leaseReadyAt == 0 ? null : now - leaseReadyAt, inFlight > 0 ? 0L : now - lastActivity,
+                inFlight, evictPending, requests, promptTokens, cachedTokens, completionTokens, costUsd);
     }
 }

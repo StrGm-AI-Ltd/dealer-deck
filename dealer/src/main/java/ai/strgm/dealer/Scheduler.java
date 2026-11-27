@@ -10,9 +10,6 @@ import static java.util.Comparator.reverseOrder;
 
 import ai.strgm.dealer.DealerProperties.ClientConfig;
 import ai.strgm.dealer.DeckRegistry.ModelProfileRef;
-import ai.strgm.dealer.api.model.EvictionEvent;
-import ai.strgm.dealer.api.model.QueuedRequest;
-import ai.strgm.dealer.api.model.SessionInfo;
 import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.deck.api.model.ModelProfile;
 import ai.strgm.types.LeaseId;
@@ -73,7 +70,7 @@ public class Scheduler {
     private final Map<SessionRef, Session> sessions = new LinkedHashMap<>();
     private final List<LeaseRequest> leaseRequests = new ArrayList<>();
     private final Map<String, LeaseRequest> reservations = new HashMap<>();
-    private final Deque<EvictionEvent> evictions = new ArrayDeque<>();
+    private final Deque<Eviction> evictions = new ArrayDeque<>();
     private long nextArrivalOrder;
 
     public Scheduler(final DeckRegistry decks, final DealerProperties properties) {
@@ -365,11 +362,10 @@ public class Scheduler {
             if (!victim.markEvicting(now, minLeaseMs)) {
                 continue;
             }
-            evictions.addLast(new EvictionEvent().createdAt(Instant.ofEpochMilli(now).getEpochSecond()).victimClient(victim.clientConfig().name()).victimSession(victim.id())
-                    .deckServer(target.serverRef().name())
-                    .profileId(mapNullable(victim.heldLease(), victimLease -> victimLease.profileRef().profile().getId()))
-                    .byClient(leaseRequest.session().clientConfig().name())
-                    .reason("priority " + leaseRequest.session().clientConfig().priority() + " > " + victim.clientConfig().priority() + " needs " + target.profile().getId()));
+            evictions.addLast(new Eviction(Instant.ofEpochMilli(now), victim.clientConfig().name(), victim.id(), target.serverRef().name(),
+                    mapNullable(victim.heldLease(), victimLease -> victimLease.profileRef().profile().getId()),
+                    leaseRequest.session().clientConfig().name(),
+                    "priority " + leaseRequest.session().clientConfig().priority() + " > " + victim.clientConfig().priority() + " needs " + target.profile().getId()));
             while (evictions.size() > properties.evictionHistory()) {
                 evictions.removeFirst();
             }
@@ -397,14 +393,13 @@ public class Scheduler {
         dispatch();
     }
 
-    public List<QueuedRequest> queue() {
+    public List<LeaseRequestSnapshot> queue() {
         synchronized (lock) {
             final var now = currentTimeMillis();
             return leaseRequests.stream()
-                    .map(leaseRequest -> new QueuedRequest().client(leaseRequest.session().clientConfig().name())
-                            .sessionId(leaseRequest.session().id()).model(leaseRequest.modelName())
-                            .clientPriority(leaseRequest.session().clientConfig().priority()).requestPriority(leaseRequest.requestPriority())
-                            .waitingMs(now - leaseRequest.enqueuedAt()).reservedProfile(reservedProfile(leaseRequest)))
+                    .map(leaseRequest -> new LeaseRequestSnapshot(leaseRequest.session().clientConfig().name(), leaseRequest.session().id(),
+                            leaseRequest.modelName(), leaseRequest.session().clientConfig().priority(), leaseRequest.requestPriority(),
+                            now - leaseRequest.enqueuedAt(), reservedProfile(leaseRequest)))
                     .toList();
         }
     }
@@ -418,16 +413,16 @@ public class Scheduler {
                 .orElse(null);
     }
 
-    public List<SessionInfo> sessions() {
+    public List<SessionSnapshot> sessions() {
         synchronized (lock) {
             final var now = currentTimeMillis();
             return sessions.values().stream()
-                    .map(session -> session.toInfo(now))
+                    .map(session -> session.snapshot(now))
                     .toList();
         }
     }
 
-    public List<EvictionEvent> evictions() {
+    public List<Eviction> evictions() {
         synchronized (lock) {
             return List.copyOf(evictions);
         }
