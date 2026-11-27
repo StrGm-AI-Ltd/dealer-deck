@@ -82,7 +82,7 @@ public class Scheduler {
     /** The profiles a request may use, in preference order. */
     // TODO(#62): limit them to the DECK servers and model profiles in the client's stored configuration, instead of
     // every profile, with external servers only behind the client's external-routing flag
-    List<ModelProfileRef> candidates(final ClientConfig clientConfig, final ModelName modelName) {
+    List<ModelProfileRef> candidateProfiles(final ClientConfig clientConfig, final ModelName modelName) {
         final var allProfileRefs = decks.profiles();
         final var virtualModelContextWindow = virtualModelContextWindow(modelName);
         if (virtualModelContextWindow.isPresent()) {
@@ -316,7 +316,7 @@ public class Scheduler {
                 ModelProfileRef firstBlocked = null;
                 List<LeaseId> firstBlockers = null;
                 boolean placed = false;
-                for (final var candidate : candidates(session.clientConfig(), leaseRequest.modelName())) {
+                for (final var candidate : candidateProfiles(session.clientConfig(), leaseRequest.modelName())) {
                     if (reservedForOther(candidate, leaseRequest)) {
                         continue;
                     }

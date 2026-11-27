@@ -89,7 +89,7 @@ public class ChatController {
         }
         final var modelName = new ModelName(requestedModel);
         // TODO(#62): say which DECK servers and model profiles the client may use, instead of its external-routing flag
-        if (scheduler.candidates(clientConfig, modelName).isEmpty()) {
+        if (scheduler.candidateProfiles(clientConfig, modelName).isEmpty()) {
             throw new ApiException(NOT_FOUND, "model_not_found",
                     "No DECK profile serves \"" + modelName + "\" for client " + clientConfig.name()
                             + (clientConfig.externalRouting() ? "" : " (external routing is off for this client)"));
