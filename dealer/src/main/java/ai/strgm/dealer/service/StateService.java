@@ -26,6 +26,6 @@ public class StateService {
                                 .filter(profileRef -> profileRef.serverRef() == serverRef)
                                 .count()))
                 .toList();
-        return new DealerSnapshot(properties.clients(), servers, scheduler.queue(), scheduler.sessions(), scheduler.evictions());
+        return new DealerSnapshot(properties.clients(), servers, scheduler.queuedLeaseRequests(), scheduler.sessions(), scheduler.evictions());
     }
 }

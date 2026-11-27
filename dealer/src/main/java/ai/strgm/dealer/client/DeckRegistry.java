@@ -84,7 +84,7 @@ public class DeckRegistry {
             deckClients.put(serverConfig.name(), new DeckClients(factory.createClient(ModelProfilesApi.class), factory.createClient(LeasesApi.class),
                     credential == null || credential.isBlank() ? null : "Bearer " + credential));
         }
-        refresh();
+        refreshProfiles();
     }
 
     private DeckClients clientsOf(final DeckServerRef serverRef) {
@@ -92,7 +92,7 @@ public class DeckRegistry {
     }
 
     @Scheduled(fixedDelayString = "${dealer.timers.deck-refresh-millis}")
-    public void refresh() {
+    public void refreshProfiles() {
         final List<ModelProfileRef> next = new ArrayList<>();
         for (final var serverRef : servers.values()) {
             try {
@@ -142,7 +142,7 @@ public class DeckRegistry {
         return reachable.getOrDefault(serverName, false);
     }
 
-    public DeckLease acquire(final ModelProfileRef profileRef, final SessionRef sessionRef) throws LeaseBlockedException {
+    public DeckLease acquireLease(final ModelProfileRef profileRef, final SessionRef sessionRef) throws LeaseBlockedException {
         try {
             return deckLease(requireNonNull(clientsOf(profileRef.serverRef()).leases().acquireLease(new LeaseRequest(profileRef.profile().id(), sessionRef))
                     .getBody(), "no lease in the response"));
@@ -158,7 +158,7 @@ public class DeckRegistry {
         return deckLease(requireNonNull(clientsOf(serverRef).leases().getLease(leaseId).getBody(), "no lease in the response"));
     }
 
-    public void release(final DeckServerRef serverRef, final LeaseId leaseId) {
+    public void releaseLease(final DeckServerRef serverRef, final LeaseId leaseId) {
         try {
             clientsOf(serverRef).leases().releaseLease(leaseId);
         } catch (Exception ignored) {
@@ -171,8 +171,8 @@ public class DeckRegistry {
      * events. Throws {@link DeckUnreachableException} when the server can't be reached, and {@link DeckErrorException}
      * when it refuses the request.
      */
-    public InputStream openChat(final DeckServerRef serverRef, final LeaseId leaseId, final String requestBody) {
-        final var request = HttpRequest.newBuilder(URI.create(serverRef.config().url() + "/v1/chat/completions"))
+    public InputStream openChatStream(final DeckServerRef serverRef, final LeaseId leaseId, final String requestBody) {
+        final var deckRequest = HttpRequest.newBuilder(URI.create(serverRef.config().url() + "/v1/chat/completions"))
                 .header("Authorization", "Bearer " + serverRef.config().key())
                 .header("X-Lease-Id", leaseId.value())
                 .header("Content-Type", "application/json")
@@ -180,30 +180,30 @@ public class DeckRegistry {
                 .POST(HttpRequest.BodyPublishers.ofString(requestBody));
         final var providerAuthorization = clientsOf(serverRef).providerAuthorization();
         if (providerAuthorization != null) {
-            request.header("X-Provider-Authorization", providerAuthorization);
+            deckRequest.header("X-Provider-Authorization", providerAuthorization);
         }
-        final HttpResponse<InputStream> response;
+        final HttpResponse<InputStream> deckResponse;
         try {
-            response = chatClient.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
+            deckResponse = chatClient.send(deckRequest.build(), HttpResponse.BodyHandlers.ofInputStream());
         } catch (Exception exception) {
             if (exception instanceof InterruptedException) {
                 currentThread().interrupt();
             }
             throw new DeckUnreachableException("DECK server " + serverRef.name() + " unreachable");
         }
-        if (response.statusCode() != OK.value()) {
-            String text;
-            try (var responseBody = response.body()) {
-                text = new String(responseBody.readAllBytes(), UTF_8);
+        if (deckResponse.statusCode() != OK.value()) {
+            String deckErrorBody;
+            try (var responseBody = deckResponse.body()) {
+                deckErrorBody = new String(responseBody.readAllBytes(), UTF_8);
             } catch (Exception exception) {
-                text = "";
+                deckErrorBody = "";
             }
-            throw new DeckErrorException(response.statusCode(), text);
+            throw new DeckErrorException(deckResponse.statusCode(), deckErrorBody);
         }
-        return response.body();
+        return deckResponse.body();
     }
 
-    public void evict(final DeckServerRef serverRef, final LeaseId leaseId) {
+    public void evictLease(final DeckServerRef serverRef, final LeaseId leaseId) {
         try {
             clientsOf(serverRef).leases().evictLease(leaseId);
         } catch (Exception ignored) {

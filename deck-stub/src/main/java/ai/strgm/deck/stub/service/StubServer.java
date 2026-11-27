@@ -155,9 +155,9 @@ public class StubServer extends AbstractDeckServer {
     }
 
     @Override
-    protected LeaseRecord grant(final ProfileId profileId, final SessionRef sessionRef) {
+    protected LeaseRecord grantLease(final ProfileId profileId, final SessionRef sessionRef) {
         final var profileDef = profileDefFor(profileId);
-        final var blockers = activeRecords().stream()
+        final var blockers = activeLeaseRecords().stream()
                 .filter(other -> overlaps(profileDefFor(other.profileId()), profileDef))
                 .map(LeaseRecord::id)
                 .toList();
@@ -166,7 +166,7 @@ public class StubServer extends AbstractDeckServer {
         }
         final var isLoaded = profileDef.workers().stream()
                 .allMatch(worker -> profileDef.id().value().equals(loaded.get(worker)));
-        final var leaseRecord = register(profileId, sessionRef, isLoaded ? LeaseState.READY : LeaseState.LOADING);
+        final var leaseRecord = registerLease(profileId, sessionRef, isLoaded ? LeaseState.READY : LeaseState.LOADING);
         if (!isLoaded) {
             profileDef.workers().forEach(worker -> loaded.put(worker, LOADING_PREFIX + profileDef.id()));
             Thread.ofVirtual().start(() -> {
@@ -184,7 +184,7 @@ public class StubServer extends AbstractDeckServer {
     public ServerState state() {
         final List<Worker> workers;
         synchronized (lock) {
-            final var activeLeaseRecords = activeRecords();
+            final var activeLeaseRecords = activeLeaseRecords();
             workers = loaded.entrySet().stream()
                     .map(worker -> {
                         final var isLeased = activeLeaseRecords.stream()
@@ -198,15 +198,15 @@ public class StubServer extends AbstractDeckServer {
     }
 
     @Override
-    public ChatStream chat(final LeaseId leaseId, final @Nullable String providerAuthorization, final JsonNode request) {
-        final var leaseRecord = activeRecord(leaseId);
+    public ChatStream openChatStream(final LeaseId leaseId, final @Nullable String providerAuthorization, final JsonNode chatRequest) {
+        final var leaseRecord = activeLeaseRecord(leaseId);
         final var profileDef = profileDefFor(leaseRecord.profileId());
-        final var maxTokens = (int) max(1, min(Json.number(request.path("max_tokens")) == 0 ? DEFAULT_MAX_TOKENS
-                : Json.number(request.path("max_tokens")), WORDS.length));
-        final var includeUsage = Json.bool(request.path("stream_options").path("include_usage"));
-        final var promptTokens = Json.promptTokens(request);
+        final var maxTokens = (int) max(1, min(Json.number(chatRequest.path("max_tokens")) == 0 ? DEFAULT_MAX_TOKENS
+                : Json.number(chatRequest.path("max_tokens")), WORDS.length));
+        final var includeUsage = Json.bool(chatRequest.path("stream_options").path("include_usage"));
+        final var promptTokens = Json.promptTokens(chatRequest);
         final var speed = speedAt(profileDef, promptTokens);
-        final ChatStream body = out -> {
+        final ChatStream chatStream = out -> {
             final var deadline = currentTimeMillis() + Duration.ofSeconds(stubProperties.loadingWaitSeconds()).toMillis();
             while (isLoading(leaseRecord) && currentTimeMillis() < deadline) {
                 sleep(stubProperties.loadingPollMillis());
@@ -225,7 +225,7 @@ public class StubServer extends AbstractDeckServer {
                 }
                 delta.put("content", WORDS[tokenIndex] + " ");
                 choice.putNull("finish_reason");
-                write(out, contentChunk.toString());
+                writeEvent(out, contentChunk.toString());
                 sleep(round(MILLIS_PER_SECOND / speed.decodeTps() * stubProperties.timeFactor()));
             }
             final var finishChunk = mapper.createObjectNode();
@@ -234,7 +234,7 @@ public class StubServer extends AbstractDeckServer {
             choice.put("index", 0);
             choice.putObject("delta");
             choice.put("finish_reason", "stop");
-            write(out, finishChunk.toString());
+            writeEvent(out, finishChunk.toString());
             if (includeUsage) {
                 final var usageChunk = mapper.createObjectNode();
                 usageChunk.put("id", id).put("object", "chat.completion.chunk").put("created", createdAt).put("model", profileDef.model().value());
@@ -242,16 +242,16 @@ public class StubServer extends AbstractDeckServer {
                 final var usage = usageChunk.putObject("usage");
                 usage.put("prompt_tokens", promptTokens).put("completion_tokens", maxTokens).put("total_tokens", promptTokens + maxTokens);
                 usage.putObject("prompt_tokens_details").put("cached_tokens", 0);
-                write(out, usageChunk.toString());
+                writeEvent(out, usageChunk.toString());
             }
             addUsage(leaseRecord, promptTokens, 0, maxTokens, false);
             out.write("data: [DONE]\n\n".getBytes(UTF_8));
             out.flush();
         };
-        return body;
+        return chatStream;
     }
 
-    private static void write(final java.io.OutputStream out, final String json) throws java.io.IOException {
+    private static void writeEvent(final java.io.OutputStream out, final String json) throws java.io.IOException {
         out.write(("data: " + json + "\n\n").getBytes(UTF_8));
         out.flush();
     }

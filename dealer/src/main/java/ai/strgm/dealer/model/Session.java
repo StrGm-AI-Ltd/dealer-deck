@@ -86,12 +86,12 @@ public final class Session {
     }
 
     /** Whether a request for {@code modelName} can use the session's lease: it holds one for that model, not being evicted. */
-    public boolean canReuse(final ModelName modelName) {
+    public boolean canReuseLease(final ModelName modelName) {
         return heldLease != null && !evictPending && modelName.equals(this.modelName);
     }
 
-    /** Places another request on the session's lease, which {@link #canReuse} allowed. */
-    public Placement reuse() {
+    /** Places another request on the session's lease, which {@link #canReuseLease} allowed. */
+    public Placement reuseLease() {
         requireNonNull(heldLease, "canReuse() found a lease");
         inFlight++;
         return new Placement(this, heldLease.profileRef(), heldLease.id());
@@ -111,7 +111,7 @@ public final class Session {
     }
 
     /** Places the session's queued lease request on a lease DECK has just granted. */
-    public Placement place(final LeaseRequest leaseRequest, final ModelProfileRef profileRef, final DeckLease grantedLease) {
+    public Placement placeOnLease(final LeaseRequest leaseRequest, final ModelProfileRef profileRef, final DeckLease grantedLease) {
         modelName = leaseRequest.modelName();
         heldLease = new HeldLease(profileRef, grantedLease.id());
         if (grantedLease.state() == LeaseState.READY) {
@@ -167,7 +167,7 @@ public final class Session {
     }
 
     /** Clears the session's lease and returns it, for the caller to evict on DECK. */
-    public @Nullable HeldLease evicted() {
+    public @Nullable HeldLease clearLeaseForEviction() {
         return clearLease(SessionLeaseState.EVICTED);
     }
 
@@ -175,12 +175,12 @@ public final class Session {
      * For a model switch: clears the session's lease once its requests have ended, and returns it for the caller to
      * release on DECK, so the session never holds two leases (#64). Null while it has requests in flight.
      */
-    public @Nullable HeldLease releasedForSwitch() {
+    public @Nullable HeldLease clearLeaseForSwitch() {
         return inFlight == 0 ? clearLease(SessionLeaseState.RELEASED) : null;
     }
 
     /** Clears the session's lease if it has been idle for longer than {@code idleMs}, and returns it, for release on DECK. */
-    public @Nullable HeldLease releasedIfIdle(final long now, final long idleMs) {
+    public @Nullable HeldLease clearLeaseIfIdle(final long now, final long idleMs) {
         return inFlight == 0 && !evictPending && now - lastActivity > idleMs ? clearLease(SessionLeaseState.RELEASED_IDLE) : null;
     }
 

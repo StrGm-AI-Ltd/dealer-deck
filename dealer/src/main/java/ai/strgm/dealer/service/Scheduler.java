@@ -130,14 +130,14 @@ public class Scheduler {
     }
 
     /** Blocks until the request is placed on a ready lease. */
-    public Placement acquire(final ClientConfig clientConfig, final SessionId sessionId, final ModelName modelName, final Priority requestPriority) {
-        final var placement = place(clientConfig, sessionId, modelName, requestPriority);
+    public Placement acquireLease(final ClientConfig clientConfig, final SessionId sessionId, final ModelName modelName, final Priority requestPriority) {
+        final var placement = placeRequest(clientConfig, sessionId, modelName, requestPriority);
         try {
             awaitReady(placement);
         } catch (RuntimeException exception) {
             // the request won't be served: undo its in-flight count, so the lease can still idle out or be evicted,
             // and keep the lease, so a retry can use it (#101)
-            release(placement, 0, 0, 0);
+            endRequest(placement, 0, 0, 0);
             throw exception;
         }
         return placement;
@@ -147,7 +147,7 @@ public class Scheduler {
      * Places the request on its session's lease, or queues it for a new one. A session queues one acquisition at a
      * time (#64): a request that finds one queued waits for it, then tries again.
      */
-    private Placement place(final ClientConfig clientConfig, final SessionId sessionId, final ModelName modelName, final Priority requestPriority) {
+    private Placement placeRequest(final ClientConfig clientConfig, final SessionId sessionId, final ModelName modelName, final Priority requestPriority) {
         final Session session;
         synchronized (lock) {
             session = sessions.computeIfAbsent(sessionKey(clientConfig, sessionId), sessionRef -> new Session(clientConfig, sessionId));
@@ -156,7 +156,7 @@ public class Scheduler {
         while (true) {
             final LeaseRequest leaseRequest;
             // The choice below is made under the lock, so two requests can't both queue a lease request. The waiting
-            // happens outside it, because the dispatch() that places a lease request later, from release() or tick(),
+            // happens outside it, because the dispatch() that places a lease request later, from endRequest() or tick(),
             // needs the lock too. queuedAhead says whose lease request it is. The owner dispatches it and gets its
             // placement, already counted in flight, so the new lease can't be released or evicted before it's used;
             // only the owner cancels it. A request queued behind another's waits for it to settle, then tries again.
@@ -165,8 +165,8 @@ public class Scheduler {
                 if (session.pendingLeaseRequest() != null) {
                     leaseRequest = session.pendingLeaseRequest();
                     queuedAhead = true;
-                } else if (session.canReuse(modelName)) {
-                    return session.reuse();
+                } else if (session.canReuseLease(modelName)) {
+                    return session.reuseLease();
                 } else {
                     leaseRequest = new LeaseRequest(session, modelName, requestPriority, nextArrivalOrder++);
                     leaseRequests.add(leaseRequest);
@@ -176,7 +176,7 @@ public class Scheduler {
             }
             if (!queuedAhead) {
                 dispatch();
-                return placed(leaseRequest);
+                return awaitPlacement(leaseRequest);
             }
             awaitSettled(leaseRequest);
         }
@@ -191,7 +191,7 @@ public class Scheduler {
     }
 
     /** Waits for the request's own acquisition to be placed. */
-    private Placement placed(final LeaseRequest leaseRequest) {
+    private Placement awaitPlacement(final LeaseRequest leaseRequest) {
         try {
             return leaseRequest.placement().get();
         } catch (InterruptedException exception) {
@@ -223,7 +223,7 @@ public class Scheduler {
             leaseRequest.session().dequeue(leaseRequest);
             // wakes the requests waiting for it; a placement made just before the cancel is undone
             if (!leaseRequest.placement().completeExceptionally(new IllegalStateException("The queued request was cancelled"))) {
-                release(leaseRequest.placement().join(), 0, 0, 0);
+                endRequest(leaseRequest.placement().join(), 0, 0, 0);
             }
         }
     }
@@ -250,20 +250,20 @@ public class Scheduler {
     }
 
     /** Called when a request's stream ends: accounts usage and applies a pending eviction. */
-    public void release(final Placement placement, final long promptTokens, final long cachedTokens, final long completionTokens) {
+    public void endRequest(final Placement placement, final long promptTokens, final long cachedTokens, final long completionTokens) {
         synchronized (lock) {
             placement.session().endRequest(promptTokens, cachedTokens, completionTokens, placement.profileRef().profile().prices());
             if (placement.session().evictionDue()) {
-                evictNow(placement.session());
+                evictLeaseNow(placement.session());
             }
         }
         dispatch();
     }
 
-    private void evictNow(final Session session) {
-        final var evictedLease = session.evicted();
+    private void evictLeaseNow(final Session session) {
+        final var evictedLease = session.clearLeaseForEviction();
         if (evictedLease != null) {
-            decks.evict(evictedLease.profileRef().serverRef(), evictedLease.id());
+            decks.evictLease(evictedLease.profileRef().serverRef(), evictedLease.id());
             log.info("Evicted {} from {}", session.ref(), evictedLease.profileRef().key());
         }
     }
@@ -296,11 +296,11 @@ public class Scheduler {
         synchronized (lock) {
             // A lease request whose session still holds a lease is a model switch, or a request that came while the
             // lease was being evicted. Once the session's requests in flight end, the old lease goes first: released
-            // here for a model switch, evicted by release() for an eviction. So a session never holds two leases (#64).
+            // here for a model switch, evicted by endRequest() for an eviction. So a session never holds two leases (#64).
             for (final var leaseRequest : leaseRequests) {
-                final var releasedLease = leaseRequest.session().releasedForSwitch();
+                final var releasedLease = leaseRequest.session().clearLeaseForSwitch();
                 if (releasedLease != null) {
-                    decks.release(releasedLease.profileRef().serverRef(), releasedLease.id());
+                    decks.releaseLease(releasedLease.profileRef().serverRef(), releasedLease.id());
                 }
             }
             leaseRequests.sort(comparing((LeaseRequest queued) -> queued.session().clientConfig().priority(), reverseOrder())
@@ -320,8 +320,8 @@ public class Scheduler {
                         continue;
                     }
                     try {
-                        final var lease = decks.acquire(candidate, session.ref());
-                        final var placement = session.place(leaseRequest, candidate, lease);
+                        final var lease = decks.acquireLease(candidate, session.ref());
+                        final var placement = session.placeOnLease(leaseRequest, candidate, lease);
                         queue.remove();
                         reservations.values().removeIf(reservingLeaseRequest -> reservingLeaseRequest == leaseRequest);
                         leaseRequest.placement().complete(placement);
@@ -371,7 +371,7 @@ public class Scheduler {
             }
             log.info("Evicting {} for {} (needs {})", victim.ref(), leaseRequest.session().ref(), target.key());
             if (victim.inFlight() == 0) {
-                evictNow(victim);
+                evictLeaseNow(victim);
             }
         }
     }
@@ -383,9 +383,9 @@ public class Scheduler {
             final var idleMs = Duration.ofSeconds(properties.timers().idleSeconds()).toMillis();
             final var now = currentTimeMillis();
             for (final var session : sessions.values()) {
-                final var releasedLease = session.releasedIfIdle(now, idleMs);
+                final var releasedLease = session.clearLeaseIfIdle(now, idleMs);
                 if (releasedLease != null) {
-                    decks.release(releasedLease.profileRef().serverRef(), releasedLease.id());
+                    decks.releaseLease(releasedLease.profileRef().serverRef(), releasedLease.id());
                     log.info("Released idle lease of {} on {}", session.ref(), releasedLease.profileRef().key());
                 }
             }
@@ -393,7 +393,7 @@ public class Scheduler {
         dispatch();
     }
 
-    public List<LeaseRequestSnapshot> queue() {
+    public List<LeaseRequestSnapshot> queuedLeaseRequests() {
         synchronized (lock) {
             final var now = currentTimeMillis();
             return leaseRequests.stream()

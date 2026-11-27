@@ -30,24 +30,24 @@ public class ChatService {
      * {@link ModelNotFoundException} when no profile serves the model for the client, and the scheduler's and DECK's
      * exceptions before streaming starts.
      */
-    public ChatStream open(final ClientConfig clientConfig, final SessionId sessionId, final ModelName modelName, final Priority priority,
-            final JsonNode request) {
+    public ChatStream openStream(final ClientConfig clientConfig, final SessionId sessionId, final ModelName modelName, final Priority priority,
+            final JsonNode chatRequest) {
         // TODO(#62): say which DECK servers and model profiles the client may use, instead of its external-routing flag
         if (scheduler.candidateProfiles(clientConfig, modelName).isEmpty()) {
             throw new ModelNotFoundException("No DECK profile serves \"" + modelName + "\" for client " + clientConfig.name()
                     + (clientConfig.externalRouting() ? "" : " (external routing is off for this client)"));
         }
-        final var placement = scheduler.acquire(clientConfig, sessionId, modelName, priority);
-        final var upstreamRequest = (ObjectNode) request.deepCopy();
-        upstreamRequest.put("model", placement.profileRef().profile().modelName().value());
-        final var clientWantsUsage = request.path("stream_options").path("include_usage").isBoolean()
-                && request.path("stream_options").path("include_usage").booleanValue();
-        upstreamRequest.putObject("stream_options").put("include_usage", true);
+        final var placement = scheduler.acquireLease(clientConfig, sessionId, modelName, priority);
+        final var deckRequest = (ObjectNode) chatRequest.deepCopy();
+        deckRequest.put("model", placement.profileRef().profile().modelName().value());
+        final var clientWantsUsage = chatRequest.path("stream_options").path("include_usage").isBoolean()
+                && chatRequest.path("stream_options").path("include_usage").booleanValue();
+        deckRequest.putObject("stream_options").put("include_usage", true);
         final InputStream deckEvents;
         try {
-            deckEvents = decks.openChat(placement.profileRef().serverRef(), placement.leaseId(), upstreamRequest.toString());
+            deckEvents = decks.openChatStream(placement.profileRef().serverRef(), placement.leaseId(), deckRequest.toString());
         } catch (RuntimeException exception) {
-            scheduler.release(placement, 0, 0, 0);
+            scheduler.endRequest(placement, 0, 0, 0);
             throw exception;
         }
         return new ChatStream(placement, deckEvents, clientWantsUsage, scheduler, mapper);

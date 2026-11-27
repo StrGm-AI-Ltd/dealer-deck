@@ -101,7 +101,7 @@ public class DashboardView extends VerticalLayout {
         add(new H3("Sessions and leases"), sessions, new H3("Queue"), queue, new H3("Evictions"), evictions);
         final var decks = new HorizontalLayout();
         decks.setWidthFull();
-        clients.decks().keySet().forEach(deckName -> {
+        clients.deckMetricsApis().keySet().forEach(deckName -> {
             final var profiles = new Grid<ModelProfile>();
             profiles.addColumn(ModelProfile::getId).setHeader("Profile").setAutoWidth(true);
             profiles.addColumn(profile -> profile.getReadiness().getValue() + (profile.getReadiness() != Readiness.UNLOADED || profile.getLoadingTimeMs() == null
@@ -132,7 +132,7 @@ public class DashboardView extends VerticalLayout {
 
     @Override
     protected void onAttach(final AttachEvent event) {
-        apply(fetch());
+        apply(fetchSnapshot());
         // A browser-side timer calls tick() every second; each response carries the grid updates.
         getElement().executeJs("const el = $0; clearInterval(el.__dealerTimer);"
                 + " el.__dealerTimer = setInterval(() => el.$server.tick(), " + refreshMillis + ");", getElement());
@@ -145,20 +145,20 @@ public class DashboardView extends VerticalLayout {
 
     @ClientCallable
     public void tick() {
-        apply(fetch());
+        apply(fetchSnapshot());
     }
 
     /** Reads the metrics APIs off the UI lock; {@link #apply} then updates the grids under it. */
-    private Snapshot fetch() {
+    private Snapshot fetchSnapshot() {
         ai.strgm.dealer.api.model.DealerState dealer = null;
         String error = null;
         try {
-            dealer = clients.dealer().getDealerState().getBody();
+            dealer = clients.dealerMetricsApi().getDealerState().getBody();
         } catch (Exception exception) {
             error = exception.getMessage();
         }
         final Map<String, ai.strgm.deck.api.model.@Nullable DeckState> decks = new LinkedHashMap<>();
-        clients.decks().forEach((deckName, api) -> {
+        clients.deckMetricsApis().forEach((deckName, api) -> {
             try {
                 decks.put(deckName, api.getDeckState().getBody());
             } catch (Exception exception) {

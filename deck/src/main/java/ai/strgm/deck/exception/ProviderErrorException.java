@@ -3,7 +3,7 @@ package ai.strgm.deck.exception;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The provider behind a DECK server refused a chat request. {@code body} is its error body, passed on unchanged, and
+ * The provider behind a DECK server refused a chat request. {@code providerErrorBody} is its error body, passed on unchanged, and
  * blank when it sent none; {@code retryAfter} is its {@code Retry-After}, if any.
  */
 public class ProviderErrorException extends RuntimeException {
@@ -22,13 +22,13 @@ public class ProviderErrorException extends RuntimeException {
     }
 
     private final Reason reason;
-    private final String body;
+    private final String providerErrorBody;
     private final @Nullable String retryAfter;
 
-    public ProviderErrorException(final Reason reason, final String message, final String body, final @Nullable String retryAfter) {
+    public ProviderErrorException(final Reason reason, final String message, final String providerErrorBody, final @Nullable String retryAfter) {
         super(message);
         this.reason = reason;
-        this.body = body;
+        this.providerErrorBody = providerErrorBody;
         this.retryAfter = retryAfter;
     }
 
@@ -36,8 +36,8 @@ public class ProviderErrorException extends RuntimeException {
         return reason;
     }
 
-    public String body() {
-        return body;
+    public String providerErrorBody() {
+        return providerErrorBody;
     }
 
     public @Nullable String retryAfter() {

@@ -34,21 +34,21 @@ public class ChatController {
     @PostMapping("/v1/chat/completions")
     public ResponseEntity<StreamingResponseBody> chat(@RequestHeader(value = "X-Lease-Id", required = false) final @Nullable String leaseId,
             @RequestHeader(value = "X-Provider-Authorization", required = false) final @Nullable String providerAuthorization,
-            @RequestBody final String body) {
+            @RequestBody final String rawBody) {
         if (leaseId == null || leaseId.isBlank()) {
             throw new ApiException(BAD_REQUEST, "invalid_request_error", "Missing required header X-Lease-Id");
         }
-        final JsonNode request;
+        final JsonNode chatRequest;
         try {
-            request = mapper.readTree(body);
+            chatRequest = mapper.readTree(rawBody);
         } catch (JacksonException exception) {
             throw new ApiException(BAD_REQUEST, "invalid_request_error", "The request body isn't valid JSON");
         }
-        if (!Json.bool(request.path("stream"))) {
+        if (!Json.bool(chatRequest.path("stream"))) {
             throw new ApiException(BAD_REQUEST, "invalid_request_error", "Streaming only: set \"stream\": true");
         }
-        final var chatStream = server.chat(new LeaseId(leaseId), providerAuthorization, request);
-        final StreamingResponseBody stream = chatStream::writeTo;
-        return ResponseEntity.ok().contentType(TEXT_EVENT_STREAM).body(stream);
+        final var chatStream = server.openChatStream(new LeaseId(leaseId), providerAuthorization, chatRequest);
+        final StreamingResponseBody responseBody = chatStream::writeTo;
+        return ResponseEntity.ok().contentType(TEXT_EVENT_STREAM).body(responseBody);
     }
 }

@@ -34,7 +34,7 @@ public class DeckApiController implements ModelProfilesApi, LeasesApi, MetricsAp
 
     @Override
     public ResponseEntity<Lease> acquireLease(final LeaseRequest leaseRequest) {
-        final var acquisition = server.acquire(leaseRequest.getProfileId(), leaseRequest.getSessionRef());
+        final var acquisition = server.acquireLease(leaseRequest.getProfileId(), leaseRequest.getSessionRef());
         final var lease = DeckApiMapper.lease(acquisition.lease());
         return acquisition.created() ? ResponseEntity.created(URI.create("/leases/" + lease.getId())).body(lease) : ResponseEntity.ok(lease);
     }
@@ -49,18 +49,18 @@ public class DeckApiController implements ModelProfilesApi, LeasesApi, MetricsAp
 
     @Override
     public ResponseEntity<Lease> getLease(final LeaseId leaseId) {
-        return ResponseEntity.ok(DeckApiMapper.lease(server.get(leaseId)));
+        return ResponseEntity.ok(DeckApiMapper.lease(server.lease(leaseId)));
     }
 
     @Override
     public ResponseEntity<Void> releaseLease(final LeaseId leaseId) {
-        server.release(leaseId);
+        server.releaseLease(leaseId);
         return ResponseEntity.noContent().build();
     }
 
     @Override
     public ResponseEntity<Lease> evictLease(final LeaseId leaseId) {
-        return ResponseEntity.ok(DeckApiMapper.lease(server.evict(leaseId)));
+        return ResponseEntity.ok(DeckApiMapper.lease(server.evictLease(leaseId)));
     }
 
     @Override

@@ -13,22 +13,22 @@ import org.springframework.web.service.invoker.HttpServiceProxyFactory;
 /** The generated HTTP-interface clients for DEALER's and each DECK server's metrics API. */
 @Component
 public class Clients {
-    private final ai.strgm.dealer.api.client.MetricsApi dealer;
-    private final Map<String, ai.strgm.deck.api.client.MetricsApi> decks = new LinkedHashMap<>();
+    private final ai.strgm.dealer.api.client.MetricsApi dealerMetricsApi;
+    private final Map<String, ai.strgm.deck.api.client.MetricsApi> deckMetricsApis = new LinkedHashMap<>();
 
     public Clients(final UiProperties properties) {
-        dealer = factory(properties.dealer(), properties).createClient(ai.strgm.dealer.api.client.MetricsApi.class);
-        properties.decks().forEach(deck -> decks.put(deck.name(), factory(deck, properties).createClient(ai.strgm.deck.api.client.MetricsApi.class)));
+        dealerMetricsApi = factory(properties.dealer(), properties).createClient(ai.strgm.dealer.api.client.MetricsApi.class);
+        properties.decks().forEach(deck -> deckMetricsApis.put(deck.name(), factory(deck, properties).createClient(ai.strgm.deck.api.client.MetricsApi.class)));
     }
 
     /** DEALER's metrics API. */
-    public ai.strgm.dealer.api.client.MetricsApi dealer() {
-        return dealer;
+    public ai.strgm.dealer.api.client.MetricsApi dealerMetricsApi() {
+        return dealerMetricsApi;
     }
 
     /** Each DECK server's metrics API, by the server's name in the configuration. */
-    public Map<String, ai.strgm.deck.api.client.MetricsApi> decks() {
-        return decks;
+    public Map<String, ai.strgm.deck.api.client.MetricsApi> deckMetricsApis() {
+        return deckMetricsApis;
     }
 
     private static HttpServiceProxyFactory factory(final UiProperties.Endpoint endpoint, final UiProperties properties) {

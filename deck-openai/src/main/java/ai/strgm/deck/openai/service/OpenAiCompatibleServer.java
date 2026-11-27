@@ -62,7 +62,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
         this.prefix = upstreamProperties.idPrefix() == null ? upstreamProperties.provider() + "/" : upstreamProperties.idPrefix();
     }
 
-    private UpstreamModel model(final ProfileId profileId) {
+    private UpstreamModel upstreamModelFor(final ProfileId profileId) {
         return upstreamProperties.models().stream()
                 .filter(upstreamModel -> profileId(upstreamModel).equals(profileId))
                 .findFirst()
@@ -91,19 +91,19 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
     }
 
     @Override
-    protected LeaseRecord grant(final ProfileId profileId, final SessionRef sessionRef) {
-        final var upstreamModel = model(profileId);
+    protected LeaseRecord grantLease(final ProfileId profileId, final SessionRef sessionRef) {
+        final var upstreamModel = upstreamModelFor(profileId);
         final var activeLeaseIds = activeLeaseIds(profileId);
         if (upstreamModel.maxLeases() != null && activeLeaseIds.size() >= upstreamModel.maxLeases()) {
             throw new LeaseConflictException("The instance budget of " + profileId + " (" + upstreamModel.maxLeases() + ") is in use",
                     activeLeaseIds);
         }
-        return register(profileId, sessionRef, LeaseState.READY);
+        return registerLease(profileId, sessionRef, LeaseState.READY);
     }
 
     // TODO(#104): a money amount with its currency, instead of a bare double
     private double cost(final LeaseSnapshot lease) {
-        final var upstreamModel = model(lease.profileId());
+        final var upstreamModel = upstreamModelFor(lease.profileId());
         final var usage = lease.usage();
         return ((usage.promptTokens() - usage.cachedTokens()) * upstreamModel.inputPerMTok()
                 + usage.cachedTokens() * upstreamModel.cachedInputPerMTok()
@@ -120,19 +120,19 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
     }
 
     @Override
-    public ChatStream chat(final LeaseId leaseId, final @Nullable String providerAuthorization, final JsonNode request) {
+    public ChatStream openChatStream(final LeaseId leaseId, final @Nullable String providerAuthorization, final JsonNode chatRequest) {
         if (providerAuthorization == null || providerAuthorization.isBlank()) {
             throw new ProviderCredentialMissingException();
         }
-        final var leaseRecord = activeRecord(leaseId);
-        final var upstreamModel = model(leaseRecord.profileId());
-        final var upstreamBody = (ObjectNode) request.deepCopy();
+        final var leaseRecord = activeLeaseRecord(leaseId);
+        final var upstreamModel = upstreamModelFor(leaseRecord.profileId());
+        final var upstreamBody = (ObjectNode) chatRequest.deepCopy();
         upstreamBody.put("model", upstreamModel.model().value());
         upstreamBody.put("stream", true);
         upstreamBody.putObject("stream_options").put("include_usage", true);
-        final var providerEvents = providerClient.openChat(providerAuthorization, upstreamBody.toString());
-        final var promptTokens = Json.promptTokens(request);
-        final ChatStream stream = out -> {
+        final var providerEvents = providerClient.openChatStream(providerAuthorization, upstreamBody.toString());
+        final var promptTokens = Json.promptTokens(chatRequest);
+        final ChatStream chatStream = out -> {
             boolean sawUsage = false;
             long completionChars = 0;
             try (var reader = new BufferedReader(new InputStreamReader(providerEvents, UTF_8))) {
@@ -167,6 +167,6 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
                 out.flush();
             }
         };
-        return stream;
+        return chatStream;
     }
 }

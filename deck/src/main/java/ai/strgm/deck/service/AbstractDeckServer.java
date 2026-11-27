@@ -40,7 +40,7 @@ public abstract class AbstractDeckServer implements DeckServer {
         this.mapper = mapper;
     }
 
-    private LeaseRecord record(final LeaseId leaseId) {
+    private LeaseRecord leaseRecord(final LeaseId leaseId) {
         final var leaseRecord = leases.get(leaseId);
         if (leaseRecord == null) {
             throw new UnknownLeaseException(leaseId);
@@ -49,9 +49,9 @@ public abstract class AbstractDeckServer implements DeckServer {
     }
 
     /** The lease a chat request names, which must still be active. */
-    protected LeaseRecord activeRecord(final LeaseId leaseId) {
+    protected LeaseRecord activeLeaseRecord(final LeaseId leaseId) {
         synchronized (lock) {
-            final var leaseRecord = record(leaseId);
+            final var leaseRecord = leaseRecord(leaseId);
             if (!leaseRecord.active()) {
                 throw new LeaseInactiveException(leaseId, leaseRecord.state());
             }
@@ -60,7 +60,7 @@ public abstract class AbstractDeckServer implements DeckServer {
     }
 
     /** The active leases, oldest first. Their ids and profiles are safe to read without the lock: they never change. */
-    protected List<LeaseRecord> activeRecords() {
+    protected List<LeaseRecord> activeLeaseRecords() {
         synchronized (lock) {
             return leases.values().stream()
                     .filter(LeaseRecord::active)
@@ -78,8 +78,8 @@ public abstract class AbstractDeckServer implements DeckServer {
         }
     }
 
-    /** Stores a new lease. For {@link #grant}, which runs under the lock. */
-    protected LeaseRecord register(final ProfileId profileId, final SessionRef sessionRef, final LeaseState state) {
+    /** Stores a new lease. For {@link #grantLease}, which runs under the lock. */
+    protected LeaseRecord registerLease(final ProfileId profileId, final SessionRef sessionRef, final LeaseState state) {
         synchronized (lock) {
             final var leaseRecord = new LeaseRecord(profileId, sessionRef, state);
             leases.put(leaseRecord.id(), leaseRecord);
@@ -129,27 +129,27 @@ public abstract class AbstractDeckServer implements DeckServer {
      * would ever release (#65).
      */
     @Override
-    public final Acquisition acquire(final ProfileId profileId, final SessionRef sessionRef) {
+    public final Acquisition acquireLease(final ProfileId profileId, final SessionRef sessionRef) {
         synchronized (lock) {
             final var heldLeaseRecord = leases.values().stream()
                     .filter(leaseRecord -> leaseRecord.active() && leaseRecord.profileId().equals(profileId)
                             && leaseRecord.sessionRef().equals(sessionRef))
                     .findFirst();
             return heldLeaseRecord.isPresent() ? new Acquisition(heldLeaseRecord.get().snapshot(), false)
-                    : new Acquisition(grant(profileId, sessionRef).snapshot(), true);
+                    : new Acquisition(grantLease(profileId, sessionRef).snapshot(), true);
         }
     }
 
     /**
-     * Grants a new lease with {@link #register}, or throws if the profile is unknown or has no capacity. Runs under
+     * Grants a new lease with {@link #registerLease}, or throws if the profile is unknown or has no capacity. Runs under
      * the lock, so the capacity it checks can't change before the lease is stored.
      */
-    protected abstract LeaseRecord grant(ProfileId profileId, SessionRef sessionRef);
+    protected abstract LeaseRecord grantLease(ProfileId profileId, SessionRef sessionRef);
 
     @Override
-    public LeaseSnapshot get(final LeaseId leaseId) {
+    public LeaseSnapshot lease(final LeaseId leaseId) {
         synchronized (lock) {
-            return record(leaseId).snapshot();
+            return leaseRecord(leaseId).snapshot();
         }
     }
 
@@ -166,16 +166,16 @@ public abstract class AbstractDeckServer implements DeckServer {
     }
 
     @Override
-    public void release(final LeaseId leaseId) {
+    public void releaseLease(final LeaseId leaseId) {
         synchronized (lock) {
-            record(leaseId).end(LeaseState.RELEASED);
+            leaseRecord(leaseId).end(LeaseState.RELEASED);
         }
     }
 
     @Override
-    public LeaseSnapshot evict(final LeaseId leaseId) {
+    public LeaseSnapshot evictLease(final LeaseId leaseId) {
         synchronized (lock) {
-            final var leaseRecord = record(leaseId);
+            final var leaseRecord = leaseRecord(leaseId);
             leaseRecord.end(LeaseState.EVICTED);
             return leaseRecord.snapshot();
         }

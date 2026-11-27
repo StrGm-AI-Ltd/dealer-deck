@@ -33,9 +33,9 @@ public class ProviderClient {
     }
 
     /** Sends a streamed chat completion with the credential DEALER forwarded, and returns its server-sent events. */
-    public InputStream openChat(final String providerAuthorization, final String requestBody) {
+    public InputStream openChatStream(final String providerAuthorization, final String requestBody) {
         final var baseUrl = upstreamProperties.baseUrl().endsWith("/") ? upstreamProperties.baseUrl() : upstreamProperties.baseUrl() + "/";
-        final var request = HttpRequest.newBuilder(URI.create(baseUrl + "chat/completions"))
+        final var providerRequest = HttpRequest.newBuilder(URI.create(baseUrl + "chat/completions"))
                 .header("Authorization", providerAuthorization)
                 .header("Content-Type", "application/json")
                 .header("Accept", "text/event-stream")
@@ -43,26 +43,26 @@ public class ProviderClient {
                 .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                 .build();
         final var providerLabel = "Provider " + upstreamProperties.provider();
-        final HttpResponse<InputStream> response;
+        final HttpResponse<InputStream> providerResponse;
         try {
-            response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            providerResponse = http.send(providerRequest, HttpResponse.BodyHandlers.ofInputStream());
         } catch (Exception exception) {
             if (exception instanceof InterruptedException) {
                 currentThread().interrupt();
             }
             throw new ProviderUnreachableException(providerLabel + " unreachable: " + exception.getMessage());
         }
-        if (response.statusCode() != OK.value()) {
-            final var message = providerLabel + " error " + response.statusCode();
-            final String text;
-            try (var responseBody = response.body()) {
-                text = new String(responseBody.readAllBytes(), UTF_8);
+        if (providerResponse.statusCode() != OK.value()) {
+            final var message = providerLabel + " error " + providerResponse.statusCode();
+            final String providerErrorBody;
+            try (var responseBody = providerResponse.body()) {
+                providerErrorBody = new String(responseBody.readAllBytes(), UTF_8);
             } catch (Exception exception) {
                 throw new ProviderErrorException(Reason.UNREADABLE, message, "", null);
             }
-            throw new ProviderErrorException(reason(response.statusCode()), message, text, response.headers().firstValue("Retry-After").orElse(null));
+            throw new ProviderErrorException(reason(providerResponse.statusCode()), message, providerErrorBody, providerResponse.headers().firstValue("Retry-After").orElse(null));
         }
-        return response.body();
+        return providerResponse.body();
     }
 
     /** What the provider's error status means: retry later, a rejected credential, a rejected request, or anything else. */

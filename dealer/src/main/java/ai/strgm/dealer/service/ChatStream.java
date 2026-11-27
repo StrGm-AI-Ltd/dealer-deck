@@ -83,7 +83,7 @@ public final class ChatStream {
                 }
             }
         } finally {
-            scheduler.release(placement, promptTokens, cachedTokens, completionTokens);
+            scheduler.endRequest(placement, promptTokens, cachedTokens, completionTokens);
         }
     }
 

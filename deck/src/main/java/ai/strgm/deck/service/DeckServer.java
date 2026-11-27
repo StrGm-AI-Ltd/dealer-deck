@@ -23,16 +23,16 @@ public interface DeckServer {
      * Acquires a lease on {@code profileId} for {@code sessionRef}, idempotently: if the session already holds an
      * active lease on the profile, that lease is returned unchanged ({@code created} is false).
      */
-    Acquisition acquire(ProfileId profileId, SessionRef sessionRef);
+    Acquisition acquireLease(ProfileId profileId, SessionRef sessionRef);
 
-    LeaseSnapshot get(LeaseId leaseId);
+    LeaseSnapshot lease(LeaseId leaseId);
 
     /** The active leases, oldest first; only those on {@code profileId} and of {@code sessionRef}, if given. */
     List<LeaseSnapshot> leases(@Nullable ProfileId profileId, @Nullable SessionRef sessionRef);
 
-    void release(LeaseId leaseId);
+    void releaseLease(LeaseId leaseId);
 
-    LeaseSnapshot evict(LeaseId leaseId);
+    LeaseSnapshot evictLease(LeaseId leaseId);
 
     ServerState state();
 
@@ -40,5 +40,5 @@ public interface DeckServer {
      * Opens the completion on lease {@code leaseId}, with the provider credential to forward, if the server needs one.
      * Throws before streaming starts if the lease isn't active or the provider refuses the request.
      */
-    ChatStream chat(LeaseId leaseId, @Nullable String providerAuthorization, JsonNode request);
+    ChatStream openChatStream(LeaseId leaseId, @Nullable String providerAuthorization, JsonNode request);
 }
