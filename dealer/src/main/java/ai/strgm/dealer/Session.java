@@ -5,7 +5,7 @@ import static java.lang.System.currentTimeMillis;
 import static java.util.Objects.requireNonNull;
 
 import ai.strgm.dealer.DealerProperties.ClientDef;
-import ai.strgm.dealer.DeckRegistry.ProfileRef;
+import ai.strgm.dealer.DeckRegistry.ModelProfileRef;
 import ai.strgm.dealer.DeckRegistry.Server;
 import ai.strgm.dealer.Scheduler.Placement;
 import ai.strgm.dealer.api.model.SessionInfo;
@@ -29,7 +29,7 @@ final class Session {
     private static final double TOKENS_PER_MILLION = 1_000_000.0;
 
     /** The lease a session holds; its profile and id are set and cleared together. */
-    record HeldLease(ProfileRef profile, LeaseId id) {}
+    record HeldLease(ModelProfileRef profile, LeaseId id) {}
 
     private final ClientDef client;
     private final SessionId id;
@@ -115,7 +115,7 @@ final class Session {
     }
 
     /** Places the session's queued lease request on a lease DECK has just granted. */
-    Placement place(final LeaseRequest leaseRequest, final ProfileRef profile, final Lease granted) {
+    Placement place(final LeaseRequest leaseRequest, final ModelProfileRef profile, final Lease granted) {
         model = leaseRequest.model();
         lease = new HeldLease(profile, granted.getId());
         if (granted.getState() == LeaseState.READY) {

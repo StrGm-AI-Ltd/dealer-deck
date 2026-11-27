@@ -50,7 +50,7 @@ public class DeckRegistry {
         }
     }
 
-    public record ProfileRef(Server server, ModelProfile profile) {
+    public record ModelProfileRef(Server server, ModelProfile profile) {
         public String key() {
             return server.name() + "/" + profile.getId();
         }
@@ -73,7 +73,7 @@ public class DeckRegistry {
     private final Map<ServerName, Server> servers = new LinkedHashMap<>();
     private final Map<ServerName, Boolean> reachable = new ConcurrentHashMap<>();
     private final ObjectMapper mapper;
-    private volatile List<ProfileRef> profiles = List.of();
+    private volatile List<ModelProfileRef> profiles = List.of();
 
     public DeckRegistry(final DealerProperties properties, final ObjectMapper mapper) {
         this.mapper = mapper;
@@ -93,11 +93,11 @@ public class DeckRegistry {
 
     @Scheduled(fixedDelay = REFRESH_INTERVAL_MS)
     public void refresh() {
-        final List<ProfileRef> next = new ArrayList<>();
+        final List<ModelProfileRef> next = new ArrayList<>();
         for (final var server : servers.values()) {
             try {
                 final var offered = requireNonNull(server.modelProfiles().getModelProfiles().getBody(), "no model profiles in the response");
-                offered.getProfiles().forEach(profile -> next.add(new ProfileRef(server, profile)));
+                offered.getProfiles().forEach(profile -> next.add(new ModelProfileRef(server, profile)));
                 reachable.put(server.name(), true);
             } catch (Exception exception) {
                 reachable.put(server.name(), false);
@@ -109,7 +109,7 @@ public class DeckRegistry {
         profiles = List.copyOf(next);
     }
 
-    public List<ProfileRef> profiles() {
+    public List<ModelProfileRef> profiles() {
         return profiles;
     }
 
@@ -121,7 +121,7 @@ public class DeckRegistry {
         return reachable.getOrDefault(server, false);
     }
 
-    public Lease acquire(final ProfileRef profileRef, final SessionRef sessionRef) throws Blocked {
+    public Lease acquire(final ModelProfileRef profileRef, final SessionRef sessionRef) throws Blocked {
         try {
             return requireNonNull(profileRef.server().leases().acquireLease(new LeaseRequest(profileRef.profile().getId(), sessionRef)).getBody(),
                     "no lease in the response");

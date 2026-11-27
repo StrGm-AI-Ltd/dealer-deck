@@ -6,7 +6,7 @@ import static java.lang.Thread.currentThread;
 import static java.util.Comparator.comparingInt;
 
 import ai.strgm.dealer.DealerProperties.ClientDef;
-import ai.strgm.dealer.DeckRegistry.ProfileRef;
+import ai.strgm.dealer.DeckRegistry.ModelProfileRef;
 import ai.strgm.dealer.api.model.EvictionEvent;
 import ai.strgm.dealer.api.model.QueuedRequest;
 import ai.strgm.dealer.api.model.SessionInfo;
@@ -64,7 +64,7 @@ public class Scheduler {
     private static final int MAX_EVICTION_EVENTS = 50;
     private static final long TICK_INTERVAL_MS = 500;
 
-    public record Placement(Session session, ProfileRef profile, LeaseId leaseId) {}
+    public record Placement(Session session, ModelProfileRef profile, LeaseId leaseId) {}
 
     private final DeckRegistry decks;
     private final DealerProperties properties;
@@ -85,7 +85,7 @@ public class Scheduler {
     /** The profiles a request may use, in preference order. */
     // TODO(#62): limit them to the DECK servers and model profiles in the client's stored configuration, instead of
     // every profile, with external servers only behind the client's external-routing flag
-    List<ProfileRef> candidates(final ClientDef client, final ModelName model) {
+    List<ModelProfileRef> candidates(final ClientDef client, final ModelName model) {
         final var all = decks.profiles();
         final var auto = AUTO.matcher(model.value());
         if (auto.matches()) {
@@ -102,7 +102,7 @@ public class Scheduler {
                     ? all.stream()
                             .filter(profileRef -> profileRef.external() && profileRef.profile().getContextWindow() >= min)
                             .toList()
-                    : List.<ProfileRef>of();
+                    : List.<ModelProfileRef>of();
             return Stream.concat(local.stream(), external.stream())
                     .toList();
         }
@@ -259,7 +259,7 @@ public class Scheduler {
         }
     }
 
-    private boolean reservedForOther(final ProfileRef candidate, final LeaseRequest leaseRequest) {
+    private boolean reservedForOther(final ModelProfileRef candidate, final LeaseRequest leaseRequest) {
         for (final var reservation : reservations.entrySet()) {
             if (reservation.getValue() == leaseRequest) {
                 continue;
@@ -309,7 +309,7 @@ public class Scheduler {
                 if (session.holdsLease()) {
                     continue;
                 }
-                ProfileRef firstBlocked = null;
+                ModelProfileRef firstBlocked = null;
                 List<LeaseId> firstBlockers = null;
                 boolean placed = false;
                 for (final var candidate : candidates(session.client(), leaseRequest.model())) {
@@ -341,7 +341,7 @@ public class Scheduler {
         }
     }
 
-    private void considerEviction(final LeaseRequest leaseRequest, final ProfileRef target, final List<LeaseId> blockers) {
+    private void considerEviction(final LeaseRequest leaseRequest, final ModelProfileRef target, final List<LeaseId> blockers) {
         final List<Session> victims = new ArrayList<>();
         for (final var leaseId : blockers) {
             final var holder = sessions.values().stream()
