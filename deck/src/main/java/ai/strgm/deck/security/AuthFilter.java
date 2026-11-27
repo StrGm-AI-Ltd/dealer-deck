@@ -3,6 +3,7 @@ package ai.strgm.deck.security;
 import static org.springframework.http.HttpStatus.UNAUTHORIZED;
 
 import ai.strgm.deck.config.DeckProperties;
+import ai.strgm.util.AuthorizationHeaders;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -30,8 +31,7 @@ public class AuthFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(final HttpServletRequest request, final HttpServletResponse response,
             final FilterChain chain) throws ServletException, IOException {
-        final var header = request.getHeader("Authorization");
-        if (header == null || !header.equals("Bearer " + properties.apiKey())) {
+        if (!properties.apiKey().equals(AuthorizationHeaders.apiKeyIn(request.getHeader("Authorization")))) {
             response.setStatus(UNAUTHORIZED.value());
             response.setContentType("application/json");
             response.getWriter().write("{\"error\":{\"message\":\"Missing or invalid DECK key\",\"type\":\"authentication_error\"}}");

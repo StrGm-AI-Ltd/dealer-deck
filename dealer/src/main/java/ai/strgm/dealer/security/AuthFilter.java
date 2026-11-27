@@ -3,6 +3,7 @@ package ai.strgm.dealer.security;
 import static org.springframework.http.HttpStatus.UNAUTHORIZED;
 
 import ai.strgm.dealer.config.DealerProperties;
+import ai.strgm.util.AuthorizationHeaders;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -14,7 +15,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
 /** Clients authenticate with their API key (D85). The metrics key may read /metrics only. */
 @Component
 public class AuthFilter extends OncePerRequestFilter {
-    private static final String BEARER_PREFIX = "Bearer ";
     public static final String CLIENT_CONFIG_ATTRIBUTE = "dealer.client";
     private final DealerProperties properties;
 
@@ -32,15 +32,14 @@ public class AuthFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(final HttpServletRequest request, final HttpServletResponse response,
             final FilterChain chain) throws ServletException, IOException {
-        final var header = request.getHeader("Authorization");
-        final var apiKey = header != null && header.startsWith(BEARER_PREFIX) ? header.substring(BEARER_PREFIX.length()) : "";
+        final var apiKey = AuthorizationHeaders.apiKeyIn(request.getHeader("Authorization"));
         final var clientConfig = properties.clients().stream()
                 .filter(candidate -> candidate.key().equals(apiKey))
                 .findFirst();
         if (clientConfig.isPresent()) {
             request.setAttribute(CLIENT_CONFIG_ATTRIBUTE, clientConfig.get());
             chain.doFilter(request, response);
-        } else if (apiKey.equals(properties.metricsKey()) && request.getRequestURI().startsWith("/metrics")) {
+        } else if (properties.metricsKey().equals(apiKey) && request.getRequestURI().startsWith("/metrics")) {
             chain.doFilter(request, response);
         } else {
             response.setStatus(UNAUTHORIZED.value());

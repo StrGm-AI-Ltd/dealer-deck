@@ -26,6 +26,7 @@ import ai.strgm.deck.api.model.ModelProfile;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ServerName;
 import ai.strgm.types.SessionRef;
+import ai.strgm.util.AuthorizationHeaders;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -78,12 +79,12 @@ public class DeckRegistry {
             requests.setConnectTimeout(Duration.ofSeconds(properties.timeouts().deckConnectSeconds()));
             requests.setReadTimeout(Duration.ofSeconds(properties.timeouts().deckReadSeconds()));
             final var restClient = RestClient.builder().requestFactory(requests).baseUrl(serverConfig.url())
-                    .defaultHeader("Authorization", "Bearer " + serverConfig.key()).build();
+                    .defaultHeader("Authorization", AuthorizationHeaders.forApiKey(serverConfig.key())).build();
             final var factory = HttpServiceProxyFactory.builderFor(RestClientAdapter.create(restClient)).build();
             final var credential = mapNullable(serverConfig.providerCredentialEnv(), System::getenv);
             servers.put(serverConfig.name(), new DeckServerRef(serverConfig));
             deckClients.put(serverConfig.name(), new DeckClients(factory.createClient(ModelProfilesApi.class), factory.createClient(LeasesApi.class),
-                    credential == null || credential.isBlank() ? null : "Bearer " + credential));
+                    credential == null || credential.isBlank() ? null : AuthorizationHeaders.forProviderCredential(credential)));
         });
         refreshProfiles();
     }
@@ -174,7 +175,7 @@ public class DeckRegistry {
      */
     public InputStream openChatStream(final DeckServerRef serverRef, final LeaseId leaseId, final String requestBody) {
         final var deckRequest = HttpRequest.newBuilder(URI.create(serverRef.config().url() + "/v1/chat/completions"))
-                .header("Authorization", "Bearer " + serverRef.config().key())
+                .header("Authorization", AuthorizationHeaders.forApiKey(serverRef.config().key()))
                 .header("X-Lease-Id", leaseId.value())
                 .header("Content-Type", "application/json")
                 .timeout(chatRequestTimeout)
