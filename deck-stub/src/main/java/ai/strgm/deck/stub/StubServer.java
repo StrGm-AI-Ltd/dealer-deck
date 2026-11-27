@@ -13,19 +13,18 @@ import ai.strgm.deck.DeckProperties;
 import ai.strgm.deck.Json;
 import ai.strgm.deck.LeaseConflictException;
 import ai.strgm.deck.LeaseRecord;
+import ai.strgm.deck.OfferedProfile;
+import ai.strgm.deck.OfferedProfile.LeaseReduction;
+import ai.strgm.deck.OfferedProfile.Prices;
+import ai.strgm.deck.OfferedProfile.Quantization;
+import ai.strgm.deck.OfferedProfile.SpeedPoint;
+import ai.strgm.deck.OfferedProfiles;
+import ai.strgm.deck.ServerState;
+import ai.strgm.deck.ServerState.Worker;
 import ai.strgm.deck.UnknownProfileException;
-import ai.strgm.deck.api.model.DeckState;
 import ai.strgm.deck.api.model.Implementation;
-import ai.strgm.deck.api.model.LeaseReduction;
 import ai.strgm.deck.api.model.LeaseState;
-import ai.strgm.deck.api.model.Limitations;
-import ai.strgm.deck.api.model.ModelProfile;
-import ai.strgm.deck.api.model.ModelProfiles;
-import ai.strgm.deck.api.model.Prices;
-import ai.strgm.deck.api.model.Quantization;
 import ai.strgm.deck.api.model.Readiness;
-import ai.strgm.deck.api.model.SpeedPoint;
-import ai.strgm.deck.api.model.Worker;
 import ai.strgm.deck.api.model.WorkerState;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
@@ -55,6 +54,8 @@ public class StubServer extends AbstractDeckServer {
     record ProfileDef(ProfileId id, ModelName model, int contextWindow, List<String> workers, long loadMs, long ttftMs,
             List<Speed> speeds, String quantization, double bitsPerWeight) {}
 
+    /** The simulated hardware is the operator's own: its tokens cost nothing. */
+    private static final Prices FREE = new Prices(0, 0, 0);
     /** Each profile allows one lease, so a lease on one profile takes one lease from every profile it overlaps. */
     private static final int LEASES_PER_PROFILE = 1;
     /** The completion length when a request doesn't set {@code max_tokens}. */
@@ -124,7 +125,7 @@ public class StubServer extends AbstractDeckServer {
         return speedPoints.getLast();
     }
 
-    private ModelProfile toApi(final ProfileDef profileDef) {
+    private OfferedProfile offeredProfile(final ProfileDef profileDef) {
         final boolean isLoaded;
         synchronized (lock) {
             isLoaded = profileDef.workers().stream()
@@ -135,24 +136,21 @@ public class StubServer extends AbstractDeckServer {
                 .filter(other -> other != profileDef && overlaps(other, profileDef))
                 .map(other -> new LeaseReduction(other.id(), LEASES_PER_PROFILE))
                 .toList();
-        return new ModelProfile(profileDef.id(), profileDef.model(), profileDef.contextWindow(), isLoaded ? Readiness.LOADED : Readiness.UNLOADED)
-                .loadingTimeMs((int) scaled(profileDef.loadMs()))
-                .quantization(new Quantization(profileDef.quantization()).bitsPerWeight(profileDef.bitsPerWeight()))
-                .limitations(new Limitations().leaseReductions(reductions))
-                .prices(new Prices().inputPerMTok(0.0).cachedInputPerMTok(0.0).outputPerMTok(0.0))
-                .maxLeases(LEASES_PER_PROFILE).activeLeases(activeLeaseIds(profileDef.id()).size())
-                .speeds(profileDef.speeds().stream()
-                        .map(point -> new SpeedPoint(point.contextTokens(),
-                                point.prefillTps() / stubProperties.timeFactor(), point.decodeTps() / stubProperties.timeFactor()))
-                        .toList());
+        final var speeds = profileDef.speeds().stream()
+                .map(point -> new SpeedPoint(point.contextTokens(),
+                        point.prefillTps() / stubProperties.timeFactor(), point.decodeTps() / stubProperties.timeFactor()))
+                .toList();
+        return new OfferedProfile(profileDef.id(), profileDef.model(), null, profileDef.contextWindow(),
+                new Quantization(profileDef.quantization(), profileDef.bitsPerWeight()), isLoaded ? Readiness.LOADED : Readiness.UNLOADED,
+                (int) scaled(profileDef.loadMs()), reductions, FREE, LEASES_PER_PROFILE, activeLeaseIds(profileDef.id()).size(), speeds);
     }
 
     @Override
-    public ModelProfiles modelProfiles() {
+    public OfferedProfiles modelProfiles() {
         final var profiles = PROFILE_DEFS.stream()
-                .map(this::toApi)
+                .map(this::offeredProfile)
                 .toList();
-        return new ModelProfiles(properties.serverName(), Implementation.STUB, profiles);
+        return new OfferedProfiles(properties.serverName(), Implementation.STUB, profiles);
     }
 
     @Override
@@ -182,7 +180,7 @@ public class StubServer extends AbstractDeckServer {
     }
 
     @Override
-    public DeckState state() {
+    public ServerState state() {
         final List<Worker> workers;
         synchronized (lock) {
             final var activeLeaseRecords = activeRecords();
@@ -190,14 +188,12 @@ public class StubServer extends AbstractDeckServer {
                     .map(worker -> {
                         final var isLeased = activeLeaseRecords.stream()
                                 .anyMatch(leaseRecord -> profileDefFor(leaseRecord.profileId()).workers().contains(worker.getKey()));
-                        return new Worker().id(worker.getKey()).loadedProfile(worker.getValue())
-                                .state(worker.getValue().startsWith(LOADING_PREFIX) ? WorkerState.LOADING
-                                        : isLeased ? WorkerState.LEASED : WorkerState.IDLE);
+                        return new Worker(worker.getKey(), worker.getValue(), worker.getValue().startsWith(LOADING_PREFIX) ? WorkerState.LOADING
+                                : isLeased ? WorkerState.LEASED : WorkerState.IDLE);
                     })
                     .toList();
         }
-        return new DeckState(properties.serverName(), Implementation.STUB, modelProfiles().getProfiles(), recentLeases())
-                .workers(workers).spendUsd(0.0);
+        return new ServerState(properties.serverName(), Implementation.STUB, null, modelProfiles().profiles(), recentLeases(), workers, 0.0);
     }
 
     @Override

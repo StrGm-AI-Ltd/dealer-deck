@@ -2,7 +2,6 @@ package ai.strgm.deck;
 
 import static java.lang.Math.max;
 
-import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ProfileId;
@@ -103,17 +102,17 @@ public abstract class AbstractDeckServer implements DeckServer {
         }
     }
 
-    /** Every lease, oldest first, as the API reports it. */
-    protected List<Lease> allLeases() {
+    /** Every lease, oldest first. */
+    protected List<LeaseSnapshot> allLeases() {
         synchronized (lock) {
             return leases.values().stream()
-                    .map(LeaseRecord::toApi)
+                    .map(LeaseRecord::snapshot)
                     .toList();
         }
     }
 
     /** The most recent leases ({@code deck.recent-leases}), oldest first, for {@link #state()}. */
-    protected List<Lease> recentLeases() {
+    protected List<LeaseSnapshot> recentLeases() {
         final var allLeases = allLeases();
         return allLeases.subList(max(0, allLeases.size() - properties.recentLeases()), allLeases.size());
     }
@@ -130,8 +129,8 @@ public abstract class AbstractDeckServer implements DeckServer {
                     .filter(leaseRecord -> leaseRecord.active() && leaseRecord.profileId().equals(profileId)
                             && leaseRecord.sessionRef().equals(sessionRef))
                     .findFirst();
-            return heldLeaseRecord.isPresent() ? new Acquisition(heldLeaseRecord.get().toApi(), false)
-                    : new Acquisition(grant(profileId, sessionRef).toApi(), true);
+            return heldLeaseRecord.isPresent() ? new Acquisition(heldLeaseRecord.get().snapshot(), false)
+                    : new Acquisition(grant(profileId, sessionRef).snapshot(), true);
         }
     }
 
@@ -142,20 +141,20 @@ public abstract class AbstractDeckServer implements DeckServer {
     protected abstract LeaseRecord grant(ProfileId profileId, SessionRef sessionRef);
 
     @Override
-    public Lease get(final LeaseId leaseId) {
+    public LeaseSnapshot get(final LeaseId leaseId) {
         synchronized (lock) {
-            return record(leaseId).toApi();
+            return record(leaseId).snapshot();
         }
     }
 
     @Override
-    public List<Lease> leases(final @Nullable ProfileId profileId, final @Nullable SessionRef sessionRef) {
+    public List<LeaseSnapshot> leases(final @Nullable ProfileId profileId, final @Nullable SessionRef sessionRef) {
         synchronized (lock) {
             return leases.values().stream()
                     .filter(LeaseRecord::active)
                     .filter(leaseRecord -> profileId == null || leaseRecord.profileId().equals(profileId))
                     .filter(leaseRecord -> sessionRef == null || sessionRef.equals(leaseRecord.sessionRef()))
-                    .map(LeaseRecord::toApi)
+                    .map(LeaseRecord::snapshot)
                     .toList();
         }
     }
@@ -168,11 +167,11 @@ public abstract class AbstractDeckServer implements DeckServer {
     }
 
     @Override
-    public Lease evict(final LeaseId leaseId) {
+    public LeaseSnapshot evict(final LeaseId leaseId) {
         synchronized (lock) {
             final var leaseRecord = record(leaseId);
             leaseRecord.end(LeaseState.EVICTED);
-            return leaseRecord.toApi();
+            return leaseRecord.snapshot();
         }
     }
 }

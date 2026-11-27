@@ -27,24 +27,27 @@ public class DeckApiController implements ModelProfilesApi, LeasesApi, MetricsAp
 
     @Override
     public ResponseEntity<ModelProfiles> getModelProfiles() {
-        return ResponseEntity.ok(server.modelProfiles());
+        return ResponseEntity.ok(DeckApiMapper.modelProfiles(server.modelProfiles()));
     }
 
     @Override
     public ResponseEntity<Lease> acquireLease(final LeaseRequest leaseRequest) {
         final var acquisition = server.acquire(leaseRequest.getProfileId(), leaseRequest.getSessionRef());
-        return acquisition.created() ? ResponseEntity.created(URI.create("/leases/" + acquisition.lease().getId())).body(acquisition.lease())
-                : ResponseEntity.ok(acquisition.lease());
+        final var lease = DeckApiMapper.lease(acquisition.lease());
+        return acquisition.created() ? ResponseEntity.created(URI.create("/leases/" + lease.getId())).body(lease) : ResponseEntity.ok(lease);
     }
 
     @Override
     public ResponseEntity<Leases> listLeases(final @Nullable ProfileId profileId, final @Nullable SessionRef sessionRef) {
-        return ResponseEntity.ok(new Leases(server.leases(profileId, sessionRef)));
+        final var leases = server.leases(profileId, sessionRef).stream()
+                .map(DeckApiMapper::lease)
+                .toList();
+        return ResponseEntity.ok(new Leases(leases));
     }
 
     @Override
     public ResponseEntity<Lease> getLease(final LeaseId leaseId) {
-        return ResponseEntity.ok(server.get(leaseId));
+        return ResponseEntity.ok(DeckApiMapper.lease(server.get(leaseId)));
     }
 
     @Override
@@ -55,11 +58,11 @@ public class DeckApiController implements ModelProfilesApi, LeasesApi, MetricsAp
 
     @Override
     public ResponseEntity<Lease> evictLease(final LeaseId leaseId) {
-        return ResponseEntity.ok(server.evict(leaseId));
+        return ResponseEntity.ok(DeckApiMapper.lease(server.evict(leaseId)));
     }
 
     @Override
     public ResponseEntity<DeckState> getDeckState() {
-        return ResponseEntity.ok(server.state());
+        return ResponseEntity.ok(DeckApiMapper.deckState(server.state()));
     }
 }

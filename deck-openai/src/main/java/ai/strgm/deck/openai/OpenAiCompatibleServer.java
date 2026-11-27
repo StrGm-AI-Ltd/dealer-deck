@@ -10,16 +10,15 @@ import ai.strgm.deck.DeckProperties;
 import ai.strgm.deck.Json;
 import ai.strgm.deck.LeaseConflictException;
 import ai.strgm.deck.LeaseRecord;
+import ai.strgm.deck.LeaseSnapshot;
+import ai.strgm.deck.OfferedProfile;
+import ai.strgm.deck.OfferedProfile.Prices;
+import ai.strgm.deck.OfferedProfile.Quantization;
+import ai.strgm.deck.OfferedProfiles;
 import ai.strgm.deck.ProviderCredentialMissingException;
+import ai.strgm.deck.ServerState;
 import ai.strgm.deck.UnknownProfileException;
-import ai.strgm.deck.api.model.DeckState;
-import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseState;
-import ai.strgm.deck.api.model.Limitations;
-import ai.strgm.deck.api.model.ModelProfile;
-import ai.strgm.deck.api.model.ModelProfiles;
-import ai.strgm.deck.api.model.Prices;
-import ai.strgm.deck.api.model.Quantization;
 import ai.strgm.deck.api.model.Readiness;
 import ai.strgm.deck.openai.UpstreamProperties.UpstreamModel;
 import ai.strgm.types.LeaseId;
@@ -73,21 +72,20 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
         return new ProfileId(prefix + upstreamModel.model());
     }
 
-    private List<ModelProfile> profiles() {
+    private List<OfferedProfile> profiles() {
         return upstreamProperties.models().stream()
-                .map(upstreamModel -> new ModelProfile(profileId(upstreamModel), new ModelName(prefix + upstreamModel.model()),
-                        upstreamModel.contextWindow(), Readiness.LOADED).provider(upstreamProperties.provider()).limitations(new Limitations())
-                        .quantization(mapNullable(upstreamModel.quantization(),
-                                quantization -> new Quantization(quantization).bitsPerWeight(upstreamModel.bitsPerWeight())))
-                        .maxLeases(upstreamModel.maxLeases()).activeLeases(activeLeaseIds(profileId(upstreamModel)).size())
-                        .prices(new Prices().inputPerMTok(upstreamModel.inputPerMTok())
-                                .cachedInputPerMTok(upstreamModel.cachedInputPerMTok()).outputPerMTok(upstreamModel.outputPerMTok())))
+                .map(upstreamModel -> new OfferedProfile(profileId(upstreamModel), new ModelName(prefix + upstreamModel.model()),
+                        upstreamProperties.provider(), upstreamModel.contextWindow(),
+                        mapNullable(upstreamModel.quantization(), quantization -> new Quantization(quantization, upstreamModel.bitsPerWeight())),
+                        Readiness.LOADED, null, List.of(),
+                        new Prices(upstreamModel.inputPerMTok(), upstreamModel.cachedInputPerMTok(), upstreamModel.outputPerMTok()),
+                        upstreamModel.maxLeases(), activeLeaseIds(profileId(upstreamModel)).size(), List.of()))
                 .toList();
     }
 
     @Override
-    public ModelProfiles modelProfiles() {
-        return new ModelProfiles(properties.serverName(), upstreamProperties.implementation(), profiles());
+    public OfferedProfiles modelProfiles() {
+        return new OfferedProfiles(properties.serverName(), upstreamProperties.implementation(), profiles());
     }
 
     @Override
@@ -102,29 +100,21 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
     }
 
     // TODO(#104): a money amount with its currency, instead of a bare double
-    private double cost(final Lease lease) {
-        final var upstreamModel = model(lease.getProfileId());
-        final var usage = lease.getUsage();
-        if (usage == null) {
-            return 0;
-        }
-        final var cachedTokens = orZero(usage.getCachedTokens());
-        return ((orZero(usage.getPromptTokens()) - cachedTokens) * upstreamModel.inputPerMTok()
-                + cachedTokens * upstreamModel.cachedInputPerMTok()
-                + orZero(usage.getCompletionTokens()) * upstreamModel.outputPerMTok()) / TOKENS_PER_MILLION;
-    }
-
-    private static long orZero(final @Nullable Long tokens) {
-        return tokens == null ? 0 : tokens;
+    private double cost(final LeaseSnapshot lease) {
+        final var upstreamModel = model(lease.profileId());
+        final var usage = lease.usage();
+        return ((usage.promptTokens() - usage.cachedTokens()) * upstreamModel.inputPerMTok()
+                + usage.cachedTokens() * upstreamModel.cachedInputPerMTok()
+                + usage.completionTokens() * upstreamModel.outputPerMTok()) / TOKENS_PER_MILLION;
     }
 
     @Override
-    public DeckState state() {
+    public ServerState state() {
         final var spend = allLeases().stream()
                 .mapToDouble(this::cost)
                 .sum();
-        return new DeckState(properties.serverName(), upstreamProperties.implementation(), profiles(), recentLeases())
-                .provider(upstreamProperties.provider()).spendUsd(spend);
+        return new ServerState(properties.serverName(), upstreamProperties.implementation(), upstreamProperties.provider(), profiles(),
+                recentLeases(), List.of(), spend);
     }
 
     @Override

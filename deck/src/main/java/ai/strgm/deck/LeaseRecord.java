@@ -3,9 +3,8 @@ package ai.strgm.deck;
 import static java.lang.System.currentTimeMillis;
 import static java.util.UUID.randomUUID;
 
-import ai.strgm.deck.api.model.Lease;
+import ai.strgm.deck.LeaseSnapshot.TokenUsage;
 import ai.strgm.deck.api.model.LeaseState;
-import ai.strgm.deck.api.model.Usage;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ProfileId;
 import ai.strgm.types.SessionRef;
@@ -82,9 +81,9 @@ public final class LeaseRecord {
         estimated |= usageEstimated;
     }
 
-    Lease toApi() {
-        return new Lease(id, profileId, state).sessionRef(sessionRef).createdAtMs(createdAt).readyAtMs(readyAt)
-                .usage(new Usage().promptTokens(promptTokens).cachedTokens(cachedTokens)
-                        .completionTokens(completionTokens).estimated(estimated));
+    /** The lease as it is now, for reading outside the lock. */
+    LeaseSnapshot snapshot() {
+        return new LeaseSnapshot(id, profileId, state, sessionRef, createdAt, readyAt,
+                new TokenUsage(promptTokens, cachedTokens, completionTokens, estimated));
     }
 }
