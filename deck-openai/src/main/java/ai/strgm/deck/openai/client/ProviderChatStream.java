@@ -4,7 +4,7 @@ import static ai.strgm.util.Nulls.mapNullable;
 
 import ai.strgm.deck.openai.model.ProviderChatEvent;
 import ai.strgm.deck.openai.model.ProviderUsage;
-import ai.strgm.deck.util.Json;
+import ai.strgm.util.JsonFields;
 import ai.strgm.util.ServerSentEventReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -39,14 +39,14 @@ public final class ProviderChatStream implements AutoCloseable {
                 .orElse(null);
         final var contentChars = chunks.stream()
                 .flatMap(chunk -> chunk.path("choices").valueStream())
-                .mapToLong(choice -> Json.text(choice.path("delta").path("content")).length())
+                .mapToLong(choice -> JsonFields.text(choice.path("delta").path("content")).length())
                 .sum();
         return new ProviderChatEvent(event.text(), mapNullable(usageChunk, chunk -> providerUsage(chunk.path("usage"))), contentChars);
     }
 
     private static ProviderUsage providerUsage(final JsonNode usage) {
-        return new ProviderUsage(Json.number(usage.path("prompt_tokens")), Json.number(usage.path("prompt_tokens_details").path("cached_tokens")),
-                Json.number(usage.path("completion_tokens")));
+        return new ProviderUsage(JsonFields.number(usage.path("prompt_tokens")), JsonFields.number(usage.path("prompt_tokens_details").path("cached_tokens")),
+                JsonFields.number(usage.path("completion_tokens")));
     }
 
     @Override

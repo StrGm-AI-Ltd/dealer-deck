@@ -8,7 +8,7 @@ import ai.strgm.deck.openai.config.UpstreamProperties;
 import ai.strgm.deck.service.AbstractDeckServer;
 import ai.strgm.deck.service.ChatStream;
 import ai.strgm.deck.config.DeckProperties;
-import ai.strgm.deck.util.Json;
+import ai.strgm.deck.util.TokenEstimates;
 import ai.strgm.deck.exception.LeaseConflictException;
 import ai.strgm.deck.model.LeaseRecord;
 import ai.strgm.deck.model.LeaseSnapshot;
@@ -23,6 +23,7 @@ import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.deck.api.model.Readiness;
 import ai.strgm.deck.openai.config.UpstreamProperties.UpstreamModel;
 import ai.strgm.deck.openai.model.ProviderChatEvent;
+import ai.strgm.types.ChatRequest;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.ProfileId;
@@ -118,14 +119,14 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
     }
 
     @Override
-    public ChatStream openChatStream(final LeaseId leaseId, final @Nullable String providerAuthorization, final JsonNode chatRequest) {
+    public ChatStream openChatStream(final LeaseId leaseId, final @Nullable String providerAuthorization, final ChatRequest chatRequest) {
         if (providerAuthorization == null || providerAuthorization.isBlank()) {
             throw new ProviderCredentialMissingException();
         }
         final var leaseRecord = activeLeaseRecord(leaseId);
         final var upstreamModel = upstreamModelFor(leaseRecord.profileId());
         final var providerEvents = providerClient.openChatStream(providerAuthorization, upstreamModel.model(), chatRequest);
-        final var promptTokens = Json.promptTokens(chatRequest);
+        final var promptTokens = TokenEstimates.fromChars(chatRequest.promptChars());
         final ChatStream chatStream = out -> {
             boolean sawUsage = false;
             long completionChars = 0;
@@ -142,7 +143,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
                 }
             } finally {
                 if (!sawUsage) {
-                    addUsage(leaseRecord, promptTokens, 0, Json.estimatedTokens(completionChars), true);
+                    addUsage(leaseRecord, promptTokens, 0, TokenEstimates.fromChars(completionChars), true);
                 }
                 out.flush();
             }

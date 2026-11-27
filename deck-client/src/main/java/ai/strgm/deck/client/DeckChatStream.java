@@ -2,11 +2,11 @@ package ai.strgm.deck.client;
 
 import ai.strgm.deck.client.model.ChatUsage;
 import ai.strgm.deck.client.model.DeckChatEvent;
+import ai.strgm.util.JsonFields;
 import ai.strgm.util.ServerSentEventReader;
 import java.io.IOException;
 import java.io.InputStream;
 import org.jspecify.annotations.Nullable;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /** A chat completion's server-sent events, read one event at a time. Close it to release the connection. */
@@ -36,15 +36,11 @@ public final class DeckChatStream implements AutoCloseable {
             return new DeckChatEvent(event.text(), null, false);
         }
         final var usage = usageChunk.path("usage");
-        return new DeckChatEvent(event.text(), new ChatUsage(number(usage.path("prompt_tokens")),
-                number(usage.path("prompt_tokens_details").path("cached_tokens")), number(usage.path("completion_tokens"))),
+        return new DeckChatEvent(event.text(), new ChatUsage(JsonFields.number(usage.path("prompt_tokens")),
+                JsonFields.number(usage.path("prompt_tokens_details").path("cached_tokens")), JsonFields.number(usage.path("completion_tokens"))),
                 // Nebius attaches usage to every chunk: only a usage-only chunk (no choices) is the one a client gets
                 // only when it asks for usage
                 usageChunk.path("choices").isEmpty());
-    }
-
-    private static long number(final JsonNode node) {
-        return node.isNumber() ? node.longValue() : 0;
     }
 
     @Override

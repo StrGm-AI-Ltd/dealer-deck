@@ -18,6 +18,7 @@ import ai.strgm.deck.client.exception.DeckLeaseConflictException;
 import ai.strgm.deck.client.exception.DeckResponseException;
 import ai.strgm.deck.client.model.DeckLease;
 import ai.strgm.deck.client.model.DeckProfile;
+import ai.strgm.types.ChatRequest;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.ServerName;
@@ -31,7 +32,6 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -116,7 +116,7 @@ public class DeckRegistry {
      * {@link DeckUnreachableException} when the server can't be reached, and {@link DeckErrorException} when it refuses
      * the request.
      */
-    public DeckChatStream openChatStream(final DeckServerRef serverRef, final LeaseId leaseId, final ModelName modelName, final JsonNode chatRequest) {
+    public DeckChatStream openChatStream(final DeckServerRef serverRef, final LeaseId leaseId, final ModelName modelName, final ChatRequest chatRequest) {
         try {
             return clientOf(serverRef).openChatStream(leaseId, modelName, chatRequest);
         } catch (DeckConnectionException exception) {

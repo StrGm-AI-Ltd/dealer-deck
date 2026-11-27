@@ -1,4 +1,4 @@
-/** Reading the fields of OpenAI-style requests and chunks. */
+/** Helpers DECK's servers share: rough token estimates. */
 @NullMarked
 package ai.strgm.deck.util;
 

@@ -4,13 +4,13 @@ import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static java.lang.Math.round;
 import static java.lang.Thread.currentThread;
-import static java.nio.charset.StandardCharsets.UTF_8;
 
 import ai.strgm.deck.service.AbstractDeckServer;
 import ai.strgm.deck.service.ChatStream;
 import ai.strgm.deck.config.DeckProperties;
+import ai.strgm.deck.mapper.ChatChunkWriter;
 import ai.strgm.deck.stub.config.StubProperties;
-import ai.strgm.deck.util.Json;
+import ai.strgm.deck.util.TokenEstimates;
 import ai.strgm.deck.exception.LeaseConflictException;
 import ai.strgm.deck.model.LeaseRecord;
 import ai.strgm.deck.model.OfferedProfile;
@@ -26,12 +26,11 @@ import ai.strgm.deck.api.model.Implementation;
 import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.deck.api.model.Readiness;
 import ai.strgm.deck.api.model.WorkerState;
+import ai.strgm.types.ChatRequest;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.ProfileId;
 import ai.strgm.types.SessionRef;
-import java.io.IOException;
-import java.io.OutputStream;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -114,9 +113,8 @@ public class StubServer extends AbstractDeckServer {
     }
 
     /** How many tokens the stub streams: the request's {@code max_tokens}, or the default when it names none, between one and the words it has. */
-    private static int completionTokens(final JsonNode chatRequest) {
-        final var requestedTokens = Json.number(chatRequest.path("max_tokens"));
-        return (int) max(1, min(requestedTokens == 0 ? DEFAULT_MAX_TOKENS : requestedTokens, WORDS.length));
+    private static int completionTokens(final ChatRequest chatRequest) {
+        return (int) max(1, min(chatRequest.maxTokens() == 0 ? DEFAULT_MAX_TOKENS : chatRequest.maxTokens(), WORDS.length));
     }
 
     private ProfileDef profileDefFor(final ProfileId id) {
@@ -222,12 +220,12 @@ public class StubServer extends AbstractDeckServer {
     }
 
     @Override
-    public ChatStream openChatStream(final LeaseId leaseId, final @Nullable String providerAuthorization, final JsonNode chatRequest) {
+    public ChatStream openChatStream(final LeaseId leaseId, final @Nullable String providerAuthorization, final ChatRequest chatRequest) {
         final var leaseRecord = activeLeaseRecord(leaseId);
         final var profileDef = profileDefFor(leaseRecord.profileId());
         final var completionTokens = completionTokens(chatRequest);
-        final var includeUsage = Json.bool(chatRequest.path("stream_options").path("include_usage"));
-        final var promptTokens = Json.promptTokens(chatRequest);
+        final var includeUsage = chatRequest.includeUsage();
+        final var promptTokens = TokenEstimates.fromChars(chatRequest.promptChars());
         final var speed = speedAt(profileDef, promptTokens);
         final ChatStream chatStream = out -> {
             final var deadline = Instant.now().plus(Duration.ofSeconds(stubProperties.loadingWaitSeconds()));
@@ -235,51 +233,20 @@ public class StubServer extends AbstractDeckServer {
                 sleep(stubProperties.loadingPollMillis());
             }
             sleep(timeToFirstTokenMillis(profileDef, promptTokens, speed));
-            final var id = "chatcmpl-" + leaseRecord.id();
-            final var createdAt = Instant.now();
+            final var chunks = new ChatChunkWriter(out, mapper, "chatcmpl-" + leaseRecord.id(), Instant.now(), profileDef.model());
             for (int tokenIndex = 0; tokenIndex < completionTokens; tokenIndex++) {
-                final var contentChunk = mapper.createObjectNode();
-                contentChunk.put("id", id).put("object", "chat.completion.chunk").put("created", createdAt.getEpochSecond())
-                        .put("model", profileDef.model().value());
-                final var choice = contentChunk.putArray("choices").addObject();
-                choice.put("index", 0);
-                final var delta = choice.putObject("delta");
-                if (tokenIndex == 0) {
-                    delta.put("role", "assistant");
-                }
-                delta.put("content", WORDS[tokenIndex] + " ");
-                choice.putNull("finish_reason");
-                writeEvent(out, contentChunk.toString());
+                chunks.writeContent(WORDS[tokenIndex] + " ", tokenIndex == 0);
                 sleep(millisPerToken(speed));
             }
-            final var finishChunk = mapper.createObjectNode();
-            finishChunk.put("id", id).put("object", "chat.completion.chunk").put("created", createdAt.getEpochSecond())
-                    .put("model", profileDef.model().value());
-            final var choice = finishChunk.putArray("choices").addObject();
-            choice.put("index", 0);
-            choice.putObject("delta");
-            choice.put("finish_reason", "stop");
-            writeEvent(out, finishChunk.toString());
+            chunks.writeFinish("stop");
             if (includeUsage) {
-                final var usageChunk = mapper.createObjectNode();
-                usageChunk.put("id", id).put("object", "chat.completion.chunk").put("created", createdAt.getEpochSecond())
-                        .put("model", profileDef.model().value());
-                usageChunk.putArray("choices");
-                final var usage = usageChunk.putObject("usage");
-                usage.put("prompt_tokens", promptTokens).put("completion_tokens", completionTokens).put("total_tokens", promptTokens + completionTokens);
-                usage.putObject("prompt_tokens_details").put("cached_tokens", 0);
-                writeEvent(out, usageChunk.toString());
+                // the stub has no prompt cache
+                chunks.writeUsage(promptTokens, 0, completionTokens);
             }
             addUsage(leaseRecord, promptTokens, 0, completionTokens, false);
-            out.write("data: [DONE]\n\n".getBytes(UTF_8));
-            out.flush();
+            chunks.writeDone();
         };
         return chatStream;
-    }
-
-    private static void writeEvent(final OutputStream out, final String json) throws IOException {
-        out.write(("data: " + json + "\n\n").getBytes(UTF_8));
-        out.flush();
     }
 
     private static void sleep(final long millis) {

@@ -4,12 +4,12 @@ import ai.strgm.deck.model.LeaseAcquisition;
 import ai.strgm.deck.model.LeaseSnapshot;
 import ai.strgm.deck.model.OfferedProfiles;
 import ai.strgm.deck.model.ServerState;
+import ai.strgm.types.ChatRequest;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ProfileId;
 import ai.strgm.types.SessionRef;
 import java.util.List;
 import org.jspecify.annotations.Nullable;
-import tools.jackson.databind.JsonNode;
 
 /**
  * One DECK interface, two implementations (D105), each an application of its own: the {@code deck-openai} module,
@@ -40,5 +40,5 @@ public interface DeckServer {
      * Opens the completion on lease {@code leaseId}, with the provider credential to forward, if the server needs one.
      * Throws before streaming starts if the lease isn't active or the provider refuses the request.
      */
-    ChatStream openChatStream(LeaseId leaseId, @Nullable String providerAuthorization, JsonNode request);
+    ChatStream openChatStream(LeaseId leaseId, @Nullable String providerAuthorization, ChatRequest chatRequest);
 }

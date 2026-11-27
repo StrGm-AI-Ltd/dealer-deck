@@ -25,6 +25,7 @@ import ai.strgm.deck.client.model.DeckProfileState;
 import ai.strgm.deck.client.model.DeckProfileState.Reduction;
 import ai.strgm.deck.client.model.DeckServerState;
 import ai.strgm.deck.client.model.DeckWorker;
+import ai.strgm.types.ChatRequest;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.ProfileId;
@@ -45,7 +46,6 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.support.RestClientAdapter;
 import org.springframework.web.service.invoker.HttpServiceProxyFactory;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
@@ -173,8 +173,8 @@ public final class DeckClient {
      * Opens a streamed chat completion of {@code modelName} on lease {@code leaseId}. It asks DECK to report the tokens
      * used, which the events carry. Close the stream once it's read.
      */
-    public DeckChatStream openChatStream(final LeaseId leaseId, final ModelName modelName, final JsonNode chatRequest) {
-        final var deckRequest = (ObjectNode) chatRequest.deepCopy();
+    public DeckChatStream openChatStream(final LeaseId leaseId, final ModelName modelName, final ChatRequest chatRequest) {
+        final var deckRequest = (ObjectNode) mapper.readTree(chatRequest.json());
         deckRequest.put("model", modelName.value());
         deckRequest.putObject("stream_options").put("include_usage", true);
         final var events = call(() -> chatStreamApi.openChatStream(leaseId, providerAuthorization, deckRequest.toString()));

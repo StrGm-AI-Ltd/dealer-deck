@@ -7,6 +7,7 @@ import ai.strgm.deck.exception.ProviderErrorException;
 import ai.strgm.deck.exception.ProviderErrorException.Reason;
 import ai.strgm.deck.exception.ProviderUnreachableException;
 import ai.strgm.deck.openai.config.UpstreamProperties;
+import ai.strgm.types.ChatRequest;
 import ai.strgm.types.ModelName;
 import java.io.IOException;
 import java.net.http.HttpClient;
@@ -19,7 +20,6 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.support.RestClientAdapter;
 import org.springframework.web.service.invoker.HttpServiceProxyFactory;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
@@ -59,8 +59,8 @@ public class ProviderClient {
      * Opens a streamed chat completion of {@code upstreamModel} with the credential DEALER forwarded. It asks the
      * provider to report the tokens used, which the events carry. Close the stream once it's read.
      */
-    public ProviderChatStream openChatStream(final String providerAuthorization, final ModelName upstreamModel, final JsonNode chatRequest) {
-        final var providerRequest = (ObjectNode) chatRequest.deepCopy();
+    public ProviderChatStream openChatStream(final String providerAuthorization, final ModelName upstreamModel, final ChatRequest chatRequest) {
+        final var providerRequest = (ObjectNode) mapper.readTree(chatRequest.json());
         providerRequest.put("model", upstreamModel.value());
         providerRequest.put("stream", true);
         providerRequest.putObject("stream_options").put("include_usage", true);

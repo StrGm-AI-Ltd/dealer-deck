@@ -4,7 +4,7 @@ import static org.springframework.http.HttpStatus.BAD_REQUEST;
 import static org.springframework.http.MediaType.TEXT_EVENT_STREAM;
 
 import ai.strgm.deck.service.DeckServer;
-import ai.strgm.deck.util.Json;
+import ai.strgm.types.ChatRequest;
 import ai.strgm.types.LeaseId;
 import org.jspecify.annotations.Nullable;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
@@ -14,7 +14,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 import tools.jackson.core.JacksonException;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -38,13 +37,13 @@ public class ChatController {
         if (leaseId == null || leaseId.isBlank()) {
             throw new ApiException(BAD_REQUEST, "invalid_request_error", "Missing required header X-Lease-Id");
         }
-        final JsonNode chatRequest;
+        final ChatRequest chatRequest;
         try {
-            chatRequest = mapper.readTree(rawBody);
+            chatRequest = ChatRequest.parse(rawBody, mapper);
         } catch (JacksonException exception) {
             throw new ApiException(BAD_REQUEST, "invalid_request_error", "The request body isn't valid JSON");
         }
-        if (!Json.bool(chatRequest.path("stream"))) {
+        if (!chatRequest.stream()) {
             throw new ApiException(BAD_REQUEST, "invalid_request_error", "Streaming only: set \"stream\": true");
         }
         // TODO(#111): reject with 400 a request whose messages isn't an array of objects, or that has no model
