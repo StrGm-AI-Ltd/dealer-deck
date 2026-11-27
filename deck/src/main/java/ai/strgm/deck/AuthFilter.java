@@ -1,21 +1,22 @@
 package ai.strgm.deck;
 
+import static org.springframework.http.HttpStatus.UNAUTHORIZED;
+
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /** Every DECK endpoint requires DEALER's DECK key (D104), except health, Swagger UI and the API documents. */
 @Component
 public class AuthFilter extends OncePerRequestFilter {
-    private final DeckProperties props;
+    private final DeckProperties properties;
 
-    public AuthFilter(final DeckProperties props) {
-        this.props = props;
+    public AuthFilter(final DeckProperties properties) {
+        this.properties = properties;
     }
 
     @Override
@@ -29,8 +30,8 @@ public class AuthFilter extends OncePerRequestFilter {
     protected void doFilterInternal(final HttpServletRequest request, final HttpServletResponse response,
             final FilterChain chain) throws ServletException, IOException {
         final var header = request.getHeader("Authorization");
-        if (header == null || !header.equals("Bearer " + props.apiKey())) {
-            response.setStatus(HttpStatus.UNAUTHORIZED.value());
+        if (header == null || !header.equals("Bearer " + properties.apiKey())) {
+            response.setStatus(UNAUTHORIZED.value());
             response.setContentType("application/json");
             response.getWriter().write("{\"error\":{\"message\":\"Missing or invalid DECK key\",\"type\":\"authentication_error\"}}");
             return;

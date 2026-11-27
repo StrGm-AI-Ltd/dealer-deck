@@ -22,6 +22,16 @@ dealer:
   timers:
     min-lease-seconds: 15
     idle-seconds: 10
+    readiness-timeout-seconds: 90
+    readiness-poll-millis: 150
+    tick-millis: 500
+    deck-refresh-millis: 1000
+  timeouts:
+    deck-connect-seconds: 2
+    deck-read-seconds: 10
+    chat-connect-seconds: 5
+    chat-request-minutes: 5
+  eviction-history: 50
   clients:
     - name: agent-a
       key: key-agent-a

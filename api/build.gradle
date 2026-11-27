@@ -40,8 +40,9 @@ def common = [
         sourceFolder            : 'src/main/java',
 ]
 def generated = []
-// The documents' identifier and name schemas become the microtypes in the types module, in models and interfaces alike
-def microtypes = ['LeaseId', 'ProfileId', 'SessionRef', 'SessionId', 'ModelName', 'ClientName', 'ServerName']
+// The documents' identifier, name and priority schemas become the microtypes in the types module, in models and
+// interfaces alike
+def microtypes = ['LeaseId', 'ProfileId', 'SessionRef', 'SessionId', 'ModelName', 'ClientName', 'ServerName', 'Priority']
         .collectEntries { [(it): "ai.strgm.types.$it".toString()] }
 
 ['deck', 'dealer'].each { name ->

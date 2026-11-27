@@ -1,5 +1,7 @@
 package ai.strgm.deck;
 
+import static java.lang.Math.max;
+
 import tools.jackson.databind.JsonNode;
 
 /** Reading the fields of OpenAI-style requests and chunks. */
@@ -28,6 +30,6 @@ public final class Json {
         for (int messageIndex = 0; messageIndex < messages.size(); messageIndex++) {
             chars += text(messages.get(messageIndex).path("content")).length();
         }
-        return Math.max(1, chars / CHARS_PER_TOKEN);
+        return max(1, chars / CHARS_PER_TOKEN);
     }
 }

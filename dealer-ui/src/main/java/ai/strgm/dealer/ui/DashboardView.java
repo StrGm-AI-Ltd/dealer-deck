@@ -1,9 +1,13 @@
 package ai.strgm.dealer.ui;
 
+import static ai.strgm.util.Nulls.mapNullable;
+import static java.util.stream.Collectors.joining;
+
 import ai.strgm.dealer.api.model.ClientInfo;
 import ai.strgm.dealer.api.model.EvictionEvent;
 import ai.strgm.dealer.api.model.QueuedRequest;
 import ai.strgm.dealer.api.model.SessionInfo;
+import ai.strgm.deck.api.model.Limitations;
 import ai.strgm.deck.api.model.ModelProfile;
 import ai.strgm.deck.api.model.Readiness;
 import ai.strgm.deck.api.model.Worker;
@@ -29,13 +33,13 @@ import java.util.Map;
 @Route("")
 @PageTitle("DEALER + DECK")
 public class DashboardView extends VerticalLayout {
-    /** How often the browser asks for fresh metrics. */
-    private static final long REFRESH_INTERVAL_MS = 1000;
     private static final double MILLIS_PER_SECOND = 1000.0;
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault());
 
     private final Clients clients;
-    private final Span status = new Span();
+    /** How often the browser asks for fresh metrics. */
+    private final int refreshMillis;
+    private final Span dealerStatus = new Span();
     private final Grid<QueuedRequest> queue = new Grid<>();
     private final Grid<SessionInfo> sessions = new Grid<>();
     private final Grid<EvictionEvent> evictions = new Grid<>();
@@ -44,11 +48,12 @@ public class DashboardView extends VerticalLayout {
     private final Map<String, Grid<Worker>> workerGrids = new LinkedHashMap<>();
     private final Map<String, Span> deckStatus = new LinkedHashMap<>();
 
-    public DashboardView(final Clients clients) {
+    public DashboardView(final Clients clients, final UiProperties properties) {
         this.clients = clients;
+        this.refreshMillis = properties.refreshMillis();
         setWidthFull();
         getStyle().set("font-size", "1.1rem");
-        add(new H1("DEALER + DECK: live view"), status);
+        add(new H1("DEALER + DECK: live view"), dealerStatus);
 
         sessions.addColumn(SessionInfo::getClient).setHeader("Client").setAutoWidth(true);
         sessions.addColumn(SessionInfo::getSessionId).setHeader("Session").setAutoWidth(true);
@@ -89,28 +94,25 @@ public class DashboardView extends VerticalLayout {
         add(new H3("Sessions and leases"), sessions, new H3("Queue"), queue, new H3("Evictions"), evictions);
         final var decks = new HorizontalLayout();
         decks.setWidthFull();
-        clients.decks.keySet().forEach(name -> {
+        clients.decks.keySet().forEach(deckName -> {
             final var profiles = new Grid<ModelProfile>();
             profiles.addColumn(ModelProfile::getId).setHeader("Profile").setAutoWidth(true);
             profiles.addColumn(profile -> profile.getReadiness().getValue() + (profile.getReadiness() != Readiness.UNLOADED || profile.getLoadingTimeMs() == null
                     ? "" : " (" + seconds(profile.getLoadingTimeMs().longValue()) + " to load)")).setHeader("Readiness").setAutoWidth(true);
             profiles.addColumn(profile -> (profile.getActiveLeases() == null ? 0 : profile.getActiveLeases()) + " / " + (profile.getMaxLeases() == null ? "∞" : profile.getMaxLeases())).setHeader("Leases / budget").setAutoWidth(true);
             profiles.addColumn(ModelProfile::getContextWindow).setHeader("Window").setAutoWidth(true);
-            profiles.addColumn(profile -> profile.getLimitations() == null || profile.getLimitations().getLeaseReductions() == null
-                    || profile.getLimitations().getLeaseReductions().isEmpty() ? "-"
-                    : String.join(", ", profile.getLimitations().getLeaseReductions().stream()
-                            .map(reduction -> reduction.getProfileId() + " \u2212" + reduction.getLeases()).toList())).setHeader("Lease reductions").setAutoWidth(true);
+            profiles.addColumn(DashboardView::leaseReductions).setHeader("Lease reductions").setAutoWidth(true);
             profiles.setAllRowsVisible(true);
             final var workers = new Grid<Worker>();
             workers.addColumn(Worker::getId).setHeader("Worker");
             workers.addColumn(Worker::getLoadedProfile).setHeader("Loaded");
             workers.addColumn(Worker::getState).setHeader("State");
             workers.setAllRowsVisible(true);
-            final var label = new Span();
-            profileGrids.put(name, profiles);
-            workerGrids.put(name, workers);
-            deckStatus.put(name, label);
-            final var column = new VerticalLayout(new H3("DECK: " + name), label, profiles, workers);
+            final var statusLabel = new Span();
+            profileGrids.put(deckName, profiles);
+            workerGrids.put(deckName, workers);
+            deckStatus.put(deckName, statusLabel);
+            final var column = new VerticalLayout(new H3("DECK: " + deckName), statusLabel, profiles, workers);
             column.setPadding(false);
             decks.add(column);
         });
@@ -125,7 +127,7 @@ public class DashboardView extends VerticalLayout {
         apply(fetch());
         // A browser-side timer calls tick() every second; each response carries the grid updates.
         getElement().executeJs("const el = $0; clearInterval(el.__dealerTimer);"
-                + " el.__dealerTimer = setInterval(() => el.$server.tick(), " + REFRESH_INTERVAL_MS + ");", getElement());
+                + " el.__dealerTimer = setInterval(() => el.$server.tick(), " + refreshMillis + ");", getElement());
     }
 
     @Override
@@ -148,45 +150,56 @@ public class DashboardView extends VerticalLayout {
             error = exception.getMessage();
         }
         final Map<String, ai.strgm.deck.api.model.DeckState> decks = new LinkedHashMap<>();
-        clients.decks.forEach((name, api) -> {
+        clients.decks.forEach((deckName, api) -> {
             try {
-                decks.put(name, api.getDeckState().getBody());
+                decks.put(deckName, api.getDeckState().getBody());
             } catch (Exception exception) {
-                decks.put(name, null);
+                decks.put(deckName, null);
             }
         });
         return new Snapshot(dealer, error, decks);
     }
 
-    private void apply(final Snapshot snap) {
-        final var state = snap.dealer();
-        if (state != null) {
-            sessions.setItems(state.getSessions());
-            queue.setItems(state.getQueue());
-            evictions.setItems(state.getEvictions().reversed());
-            clientGrid.setItems(state.getClients());
-            status.setText("DEALER: " + state.getSessions().size() + " sessions, " + state.getQueue().size() + " queued, "
-                    + state.getEvictions().size() + " evictions · " + TIME.format(Instant.now()));
+    private void apply(final Snapshot snapshot) {
+        final var dealerState = snapshot.dealer();
+        if (dealerState != null) {
+            sessions.setItems(dealerState.getSessions());
+            queue.setItems(dealerState.getQueue());
+            evictions.setItems(dealerState.getEvictions().reversed());
+            clientGrid.setItems(dealerState.getClients());
+            dealerStatus.setText("DEALER: " + dealerState.getSessions().size() + " sessions, " + dealerState.getQueue().size() + " queued, "
+                    + dealerState.getEvictions().size() + " evictions · " + TIME.format(Instant.now()));
         } else {
-            status.setText("DEALER unreachable: " + snap.dealerError());
+            dealerStatus.setText("DEALER unreachable: " + snapshot.dealerError());
         }
-        snap.decks().forEach((name, deck) -> {
+        snapshot.decks().forEach((deckName, deck) -> {
             if (deck == null) {
-                deckStatus.get(name).setText("unreachable");
+                deckStatus.get(deckName).setText("unreachable");
                 return;
             }
-            profileGrids.get(name).setItems(deck.getProfiles());
+            profileGrids.get(deckName).setItems(deck.getProfiles());
             final List<Worker> workers = deck.getWorkers() == null ? List.of() : deck.getWorkers();
-            workerGrids.get(name).setItems(workers);
-            workerGrids.get(name).setVisible(!workers.isEmpty());
-            deckStatus.get(name).setText(deck.getImplementation().getValue()
+            workerGrids.get(deckName).setItems(workers);
+            workerGrids.get(deckName).setVisible(!workers.isEmpty());
+            deckStatus.get(deckName).setText(deck.getImplementation().getValue()
                     + (deck.getProvider() == null ? "" : " · provider " + deck.getProvider())
                     // TODO(#104): the spend's own currency, as for the session cost
                     + String.format(" · spend $%.6f", deck.getSpendUsd() == null ? 0 : deck.getSpendUsd()));
         });
     }
 
-    private static String seconds(final Long ms) {
-        return ms == null ? "-" : String.format("%.1f s", ms / MILLIS_PER_SECOND);
+    /** A profile's lease reductions, e.g. {@code large −1}, or {@code -} if it has none. */
+    private static String leaseReductions(final ModelProfile profile) {
+        final var reductions = mapNullable(profile.getLimitations(), Limitations::getLeaseReductions);
+        if (reductions == null || reductions.isEmpty()) {
+            return "-";
+        }
+        return reductions.stream()
+                .map(reduction -> reduction.getProfileId() + " \u2212" + reduction.getLeases())
+                .collect(joining(", "));
+    }
+
+    private static String seconds(final Long millis) {
+        return millis == null ? "-" : String.format("%.1f s", millis / MILLIS_PER_SECOND);
     }
 }

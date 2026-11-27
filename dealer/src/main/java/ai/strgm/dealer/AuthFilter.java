@@ -1,11 +1,12 @@
 package ai.strgm.dealer;
 
+import static org.springframework.http.HttpStatus.UNAUTHORIZED;
+
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -13,11 +14,11 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @Component
 public class AuthFilter extends OncePerRequestFilter {
     private static final String BEARER_PREFIX = "Bearer ";
-    static final String CLIENT = "dealer.client";
-    private final DealerProperties props;
+    static final String CLIENT_CONFIG_ATTRIBUTE = "dealer.client";
+    private final DealerProperties properties;
 
-    public AuthFilter(final DealerProperties props) {
-        this.props = props;
+    public AuthFilter(final DealerProperties properties) {
+        this.properties = properties;
     }
 
     @Override
@@ -31,15 +32,17 @@ public class AuthFilter extends OncePerRequestFilter {
     protected void doFilterInternal(final HttpServletRequest request, final HttpServletResponse response,
             final FilterChain chain) throws ServletException, IOException {
         final var header = request.getHeader("Authorization");
-        final var key = header != null && header.startsWith(BEARER_PREFIX) ? header.substring(BEARER_PREFIX.length()) : "";
-        final var client = props.clients().stream().filter(candidate -> candidate.key().equals(key)).findFirst();
-        if (client.isPresent()) {
-            request.setAttribute(CLIENT, client.get());
+        final var apiKey = header != null && header.startsWith(BEARER_PREFIX) ? header.substring(BEARER_PREFIX.length()) : "";
+        final var clientConfig = properties.clients().stream()
+                .filter(candidate -> candidate.key().equals(apiKey))
+                .findFirst();
+        if (clientConfig.isPresent()) {
+            request.setAttribute(CLIENT_CONFIG_ATTRIBUTE, clientConfig.get());
             chain.doFilter(request, response);
-        } else if (key.equals(props.metricsKey()) && request.getRequestURI().startsWith("/metrics")) {
+        } else if (apiKey.equals(properties.metricsKey()) && request.getRequestURI().startsWith("/metrics")) {
             chain.doFilter(request, response);
         } else {
-            response.setStatus(HttpStatus.UNAUTHORIZED.value());
+            response.setStatus(UNAUTHORIZED.value());
             response.setContentType("application/json");
             response.getWriter().write("{\"error\":{\"message\":\"Invalid API key\",\"type\":\"authentication_error\"}}");
         }

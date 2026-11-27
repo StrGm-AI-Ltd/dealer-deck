@@ -1,8 +1,13 @@
 package ai.strgm.dealer;
 
-import ai.strgm.dealer.DealerProperties.ClientDef;
-import ai.strgm.dealer.DeckRegistry.ProfileRef;
-import ai.strgm.dealer.DeckRegistry.Server;
+import static ai.strgm.util.Nulls.mapNullable;
+import static java.lang.Math.max;
+import static java.lang.System.currentTimeMillis;
+import static java.util.Objects.requireNonNull;
+
+import ai.strgm.dealer.DealerProperties.ClientConfig;
+import ai.strgm.dealer.DeckRegistry.DeckServerRef;
+import ai.strgm.dealer.DeckRegistry.ModelProfileRef;
 import ai.strgm.dealer.Scheduler.Placement;
 import ai.strgm.dealer.api.model.SessionInfo;
 import ai.strgm.dealer.api.model.SessionLeaseState;
@@ -13,7 +18,6 @@ import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.SessionId;
 import ai.strgm.types.SessionRef;
-import java.util.Objects;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -26,19 +30,19 @@ final class Session {
     private static final double TOKENS_PER_MILLION = 1_000_000.0;
 
     /** The lease a session holds; its profile and id are set and cleared together. */
-    record HeldLease(ProfileRef profile, LeaseId id) {}
+    record HeldLease(ModelProfileRef profileRef, LeaseId id) {}
 
-    private final ClientDef client;
+    private final ClientConfig clientConfig;
     private final SessionId id;
     /** The model of the session's lease, or of its last one. */
-    private @Nullable ModelName model;
-    private @Nullable HeldLease lease;
+    private @Nullable ModelName modelName;
+    private @Nullable HeldLease heldLease;
     private SessionLeaseState leaseState = SessionLeaseState.NONE;
     private long leaseReadyAt;
-    private long lastActivity = System.currentTimeMillis();
+    private long lastActivity = currentTimeMillis();
     private int inFlight;
     private boolean evictPending;
-    private @Nullable LeaseRequest pending;
+    private @Nullable LeaseRequest pendingLeaseRequest;
     private int requests;
     private long promptTokens;
     private long cachedTokens;
@@ -46,13 +50,13 @@ final class Session {
     // TODO(#104): a money amount with its currency, instead of a bare double whose currency only its name gives
     private double costUsd;
 
-    Session(final ClientDef client, final SessionId id) {
-        this.client = client;
+    Session(final ClientConfig clientConfig, final SessionId id) {
+        this.clientConfig = clientConfig;
         this.id = id;
     }
 
-    ClientDef client() {
-        return client;
+    ClientConfig clientConfig() {
+        return clientConfig;
     }
 
     SessionId id() {
@@ -61,89 +65,89 @@ final class Session {
 
     /** The reference DECK knows the session by. */
     SessionRef ref() {
-        return SessionRef.of(client.name(), id);
+        return SessionRef.of(clientConfig.name(), id);
     }
 
     /** Counts a new request, and restarts the session's idle time. */
     void recordRequest() {
         requests++;
-        lastActivity = System.currentTimeMillis();
+        lastActivity = currentTimeMillis();
     }
 
     /** The session's queued lease request, if any. */
-    @Nullable LeaseRequest pending() {
-        return pending;
+    @Nullable LeaseRequest pendingLeaseRequest() {
+        return pendingLeaseRequest;
     }
 
     void queue(final LeaseRequest leaseRequest) {
-        pending = leaseRequest;
+        pendingLeaseRequest = leaseRequest;
     }
 
     /** Forgets a queued lease request that was cancelled; a newer one stays. */
     void dequeue(final LeaseRequest leaseRequest) {
-        if (pending == leaseRequest) {
-            pending = null;
+        if (pendingLeaseRequest == leaseRequest) {
+            pendingLeaseRequest = null;
         }
     }
 
-    /** Whether a request for {@code model} can use the session's lease: it holds one for that model, not being evicted. */
-    boolean canReuse(final ModelName model) {
-        return lease != null && !evictPending && model.equals(this.model);
+    /** Whether a request for {@code modelName} can use the session's lease: it holds one for that model, not being evicted. */
+    boolean canReuse(final ModelName modelName) {
+        return heldLease != null && !evictPending && modelName.equals(this.modelName);
     }
 
     /** Places another request on the session's lease, which {@link #canReuse} allowed. */
     Placement reuse() {
-        final var held = Objects.requireNonNull(lease, "canReuse() found a lease");
+        requireNonNull(heldLease, "canReuse() found a lease");
         inFlight++;
-        return new Placement(this, held.profile(), held.id());
+        return new Placement(this, heldLease.profileRef(), heldLease.id());
     }
 
     boolean holdsLease() {
-        return lease != null;
+        return heldLease != null;
     }
 
-    /** Whether the session holds lease {@code leaseId} on {@code server}. */
-    boolean holds(final LeaseId leaseId, final Server server) {
-        return lease != null && lease.id().equals(leaseId) && lease.profile().server() == server;
+    /** Whether the session holds lease {@code leaseId} on {@code serverRef}. */
+    boolean holds(final LeaseId leaseId, final DeckServerRef serverRef) {
+        return heldLease != null && heldLease.id().equals(leaseId) && heldLease.profileRef().serverRef() == serverRef;
     }
 
-    @Nullable HeldLease lease() {
-        return lease;
+    @Nullable HeldLease heldLease() {
+        return heldLease;
     }
 
     /** Places the session's queued lease request on a lease DECK has just granted. */
-    Placement place(final LeaseRequest leaseRequest, final ProfileRef profile, final Lease granted) {
-        model = leaseRequest.model();
-        lease = new HeldLease(profile, granted.getId());
-        if (granted.getState() == LeaseState.READY) {
-            markReady(granted);
+    Placement place(final LeaseRequest leaseRequest, final ModelProfileRef profileRef, final Lease grantedLease) {
+        modelName = leaseRequest.modelName();
+        heldLease = new HeldLease(profileRef, grantedLease.getId());
+        if (grantedLease.getState() == LeaseState.READY) {
+            markReady(grantedLease);
         } else {
-            leaseState = SessionLeaseState.fromValue(granted.getState().getValue());
+            leaseState = SessionLeaseState.fromValue(grantedLease.getState().getValue());
         }
         inFlight++;
-        pending = null;
-        return new Placement(this, profile, granted.getId());
+        pendingLeaseRequest = null;
+        return new Placement(this, profileRef, grantedLease.getId());
     }
 
     boolean isReady() {
         return leaseState == SessionLeaseState.READY;
     }
 
-    void markReady(final Lease ready) {
+    void markReady(final Lease readyLease) {
         leaseState = SessionLeaseState.READY;
-        leaseReadyAt = ready.getReadyAtMs() == null ? System.currentTimeMillis() : ready.getReadyAtMs();
+        leaseReadyAt = readyLease.getReadyAtMs() == null ? currentTimeMillis() : readyLease.getReadyAtMs();
     }
 
     /** Ends a request on the session's lease: undoes its in-flight count and adds its usage. */
-    void endRequest(final long prompt, final long cached, final long completion, final @Nullable Prices prices) {
-        inFlight = Math.max(0, inFlight - 1);
-        lastActivity = System.currentTimeMillis();
-        promptTokens += prompt;
-        cachedTokens += cached;
-        completionTokens += completion;
+    void endRequest(final long promptTokens, final long cachedTokens, final long completionTokens, final @Nullable Prices prices) {
+        inFlight = max(0, inFlight - 1);
+        lastActivity = currentTimeMillis();
+        this.promptTokens += promptTokens;
+        this.cachedTokens += cachedTokens;
+        this.completionTokens += completionTokens;
         if (prices != null) {
-            costUsd += ((prompt - cached) * orZero(prices.getInputPerMTok()) + cached * orZero(prices.getCachedInputPerMTok())
-                    + completion * orZero(prices.getOutputPerMTok())) / TOKENS_PER_MILLION;
+            costUsd += ((promptTokens - cachedTokens) * orZero(prices.getInputPerMTok()) + cachedTokens * orZero(prices.getCachedInputPerMTok())
+                    + completionTokens * orZero(prices.getOutputPerMTok())) / TOKENS_PER_MILLION;
         }
     }
 
@@ -192,21 +196,22 @@ final class Session {
     }
 
     private @Nullable HeldLease clearLease(final SessionLeaseState state) {
-        final var held = lease;
-        if (held != null) {
-            lease = null;
+        final var clearedLease = heldLease;
+        if (clearedLease != null) {
+            heldLease = null;
             evictPending = false;
             leaseState = state;
         }
-        return held;
+        return clearedLease;
     }
 
     SessionInfo toInfo(final long now) {
-        return new SessionInfo().client(client.name()).sessionId(id).model(model)
-                .deckServer(lease == null ? null : lease.profile().server().name())
-                .serverType(lease == null ? null : lease.profile().server().def().egress())
-                .profileId(lease == null ? null : lease.profile().profile().getId()).leaseId(lease == null ? null : lease.id())
-                .leaseState(leaseState).leaseAgeMs(lease == null || leaseReadyAt == 0 ? null : now - leaseReadyAt)
+        return new SessionInfo().client(clientConfig.name()).sessionId(id).model(modelName)
+                .deckServer(mapNullable(heldLease, currentLease -> currentLease.profileRef().serverRef().name()))
+                .serverType(mapNullable(heldLease, currentLease -> currentLease.profileRef().serverRef().config().egress()))
+                .profileId(mapNullable(heldLease, currentLease -> currentLease.profileRef().profile().getId()))
+                .leaseId(mapNullable(heldLease, HeldLease::id))
+                .leaseState(leaseState).leaseAgeMs(heldLease == null || leaseReadyAt == 0 ? null : now - leaseReadyAt)
                 .idleMs(inFlight > 0 ? 0L : now - lastActivity).inFlight(inFlight).evictPending(evictPending)
                 .requests(requests).promptTokens(promptTokens).cachedTokens(cachedTokens)
                 .completionTokens(completionTokens).costUsd(costUsd);

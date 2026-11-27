@@ -1,5 +1,13 @@
 package ai.strgm.deck.stub;
 
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+import static java.lang.Math.round;
+import static java.lang.System.currentTimeMillis;
+import static java.lang.Thread.currentThread;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.springframework.http.HttpStatus.CONFLICT;
+
 import ai.strgm.deck.AbstractDeckServer;
 import ai.strgm.deck.ApiException;
 import ai.strgm.deck.DeckProperties;
@@ -7,7 +15,6 @@ import ai.strgm.deck.Json;
 import ai.strgm.deck.LeaseRecord;
 import ai.strgm.deck.api.model.DeckState;
 import ai.strgm.deck.api.model.Implementation;
-import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseReduction;
 import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.deck.api.model.Limitations;
@@ -23,15 +30,12 @@ import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.ProfileId;
 import ai.strgm.types.SessionRef;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.jspecify.annotations.Nullable;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
@@ -49,16 +53,13 @@ public class StubServer extends AbstractDeckServer {
 
     record Speed(int contextTokens, double prefillTps, double decodeTps) {}
 
-    record Def(ProfileId id, ModelName model, int contextWindow, List<String> workers, long loadMs, long ttftMs,
+    record ProfileDef(ProfileId id, ModelName model, int contextWindow, List<String> workers, long loadMs, long ttftMs,
             List<Speed> speeds, String quantization, double bitsPerWeight) {}
 
     /** Each profile allows one lease, so a lease on one profile takes one lease from every profile it overlaps. */
     private static final int LEASES_PER_PROFILE = 1;
     /** The completion length when a request doesn't set {@code max_tokens}. */
     private static final int DEFAULT_MAX_TOKENS = 40;
-    /** How long a chat request waits for its lease to finish loading. */
-    private static final Duration LOADING_WAIT = Duration.ofSeconds(60);
-    private static final long LOADING_POLL_MS = 100;
     private static final double MILLIS_PER_SECOND = 1000.0;
     /** A worker's loaded profile, while a profile is loading onto it, is {@code loading <profile id>}. */
     private static final String LOADING_PREFIX = "loading ";
@@ -68,138 +69,160 @@ public class StubServer extends AbstractDeckServer {
     private static final List<Speed> LARGE_SPEEDS = List.of(
             new Speed(4096, 400, 25), new Speed(32768, 280, 20), new Speed(131072, 150, 14));
 
-    private static final List<Def> DEFS = List.of(
-            new Def(new ProfileId("small-a"), new ModelName("stub/small-a"), 32768, List.of("w1"), 3000, 500, SMALL_SPEEDS, "q4_k_m", 4),
-            new Def(new ProfileId("small-b"), new ModelName("stub/small-b"), 32768, List.of("w2"), 3000, 500, SMALL_SPEEDS, "q4_k_m", 4),
-            new Def(new ProfileId("large"), new ModelName("stub/large"), 131072, List.of("w1", "w2"), 6000, 900, LARGE_SPEEDS, "q8_0", 8));
+    private static final List<ProfileDef> PROFILE_DEFS = List.of(
+            new ProfileDef(new ProfileId("small-a"), new ModelName("stub/small-a"), 32768, List.of("w1"), 3000, 500, SMALL_SPEEDS, "q4_k_m", 4),
+            new ProfileDef(new ProfileId("small-b"), new ModelName("stub/small-b"), 32768, List.of("w2"), 3000, 500, SMALL_SPEEDS, "q4_k_m", 4),
+            new ProfileDef(new ProfileId("large"), new ModelName("stub/large"), 131072, List.of("w1", "w2"), 6000, 900, LARGE_SPEEDS, "q8_0", 8));
 
     private static final String[] WORDS = ("Here is a short answer from the simulated DECK stub. Prefer small, "
             + "focused functions, name things for what they do, test the behaviour rather than the implementation, "
             + "and keep side effects at the edges of the system so the core stays easy to reason about.").split(" ");
 
-    private final StubProperties stub;
+    private final StubProperties stubProperties;
     private final Map<String, String> loaded = new LinkedHashMap<>(Map.of("w1", "small-a", "w2", "small-b"));
 
-    public StubServer(final DeckProperties props, final StubProperties stub, final ObjectMapper mapper) {
-        super(props, mapper);
-        this.stub = stub;
+    public StubServer(final DeckProperties properties, final StubProperties stubProperties, final ObjectMapper mapper) {
+        super(properties, mapper);
+        this.stubProperties = stubProperties;
         loaded.clear();
         loaded.put("w1", "small-a");
         loaded.put("w2", "small-b");
     }
 
-    private long scaled(final long ms) {
-        return Math.round(ms * stub.timeFactor());
+    private long scaled(final long millis) {
+        return round(millis * stubProperties.timeFactor());
     }
 
-    private Def def(final ProfileId id) {
-        return DEFS.stream().filter(definition -> definition.id().equals(id)).findFirst()
+    private ProfileDef profileDefFor(final ProfileId id) {
+        return PROFILE_DEFS.stream()
+                .filter(definition -> definition.id().equals(id))
+                .findFirst()
                 .orElseThrow(() -> unknownProfile(id));
     }
 
-    private boolean overlaps(final Def first, final Def second) {
-        return first.workers().stream().anyMatch(second.workers()::contains);
+    private boolean overlaps(final ProfileDef first, final ProfileDef second) {
+        return first.workers().stream()
+                .anyMatch(second.workers()::contains);
     }
 
     /** The profile's speeds at {@code contextTokens}: linear between the two nearest points, clamped outside them. */
-    private static Speed speedAt(final Def profile, final long contextTokens) {
-        final var points = profile.speeds();
-        if (contextTokens <= points.getFirst().contextTokens()) {
-            return points.getFirst();
+    private static Speed speedAt(final ProfileDef profileDef, final long contextTokens) {
+        final var speedPoints = profileDef.speeds();
+        if (contextTokens <= speedPoints.getFirst().contextTokens()) {
+            return speedPoints.getFirst();
         }
-        for (int pointIndex = 1; pointIndex < points.size(); pointIndex++) {
-            final var upper = points.get(pointIndex);
-            if (contextTokens <= upper.contextTokens()) {
-                final var lower = points.get(pointIndex - 1);
-                final var fraction = (double) (contextTokens - lower.contextTokens()) / (upper.contextTokens() - lower.contextTokens());
-                return new Speed((int) contextTokens, lower.prefillTps() + fraction * (upper.prefillTps() - lower.prefillTps()),
-                        lower.decodeTps() + fraction * (upper.decodeTps() - lower.decodeTps()));
+        for (int pointIndex = 1; pointIndex < speedPoints.size(); pointIndex++) {
+            final var upperPoint = speedPoints.get(pointIndex);
+            if (contextTokens <= upperPoint.contextTokens()) {
+                final var lowerPoint = speedPoints.get(pointIndex - 1);
+                final var fractionBetweenPoints = (double) (contextTokens - lowerPoint.contextTokens())
+                        / (upperPoint.contextTokens() - lowerPoint.contextTokens());
+                return new Speed((int) contextTokens,
+                        lowerPoint.prefillTps() + fractionBetweenPoints * (upperPoint.prefillTps() - lowerPoint.prefillTps()),
+                        lowerPoint.decodeTps() + fractionBetweenPoints * (upperPoint.decodeTps() - lowerPoint.decodeTps()));
             }
         }
-        return points.getLast();
+        return speedPoints.getLast();
     }
 
-    private synchronized ModelProfile toApi(final Def profile) {
-        final var isLoaded = profile.workers().stream().allMatch(worker -> profile.id().value().equals(loaded.get(worker)));
+    private ModelProfile toApi(final ProfileDef profileDef) {
+        final boolean isLoaded;
+        synchronized (lock) {
+            isLoaded = profileDef.workers().stream()
+                    .allMatch(worker -> profileDef.id().value().equals(loaded.get(worker)));
+        }
         // a lease here takes a worker that every overlapping profile needs
-        final var reductions = DEFS.stream().filter(other -> other != profile && overlaps(other, profile))
-                .map(other -> new LeaseReduction(other.id(), LEASES_PER_PROFILE)).toList();
-        return new ModelProfile(profile.id(), profile.model(), profile.contextWindow(), isLoaded ? Readiness.LOADED : Readiness.UNLOADED)
-                .loadingTimeMs((int) scaled(profile.loadMs()))
-                .quantization(new Quantization(profile.quantization()).bitsPerWeight(profile.bitsPerWeight()))
+        final var reductions = PROFILE_DEFS.stream()
+                .filter(other -> other != profileDef && overlaps(other, profileDef))
+                .map(other -> new LeaseReduction(other.id(), LEASES_PER_PROFILE))
+                .toList();
+        return new ModelProfile(profileDef.id(), profileDef.model(), profileDef.contextWindow(), isLoaded ? Readiness.LOADED : Readiness.UNLOADED)
+                .loadingTimeMs((int) scaled(profileDef.loadMs()))
+                .quantization(new Quantization(profileDef.quantization()).bitsPerWeight(profileDef.bitsPerWeight()))
                 .limitations(new Limitations().leaseReductions(reductions))
                 .prices(new Prices().inputPerMTok(0.0).cachedInputPerMTok(0.0).outputPerMTok(0.0))
-                .maxLeases(LEASES_PER_PROFILE).activeLeases(active(profile.id()).size())
-                .speeds(profile.speeds().stream().map(point -> new SpeedPoint(point.contextTokens(),
-                        point.prefillTps() / stub.timeFactor(), point.decodeTps() / stub.timeFactor())).toList());
+                .maxLeases(LEASES_PER_PROFILE).activeLeases(activeLeaseIds(profileDef.id()).size())
+                .speeds(profileDef.speeds().stream()
+                        .map(point -> new SpeedPoint(point.contextTokens(),
+                                point.prefillTps() / stubProperties.timeFactor(), point.decodeTps() / stubProperties.timeFactor()))
+                        .toList());
     }
 
     @Override
     public ModelProfiles modelProfiles() {
-        return new ModelProfiles(props.serverName(), Implementation.STUB, DEFS.stream().map(this::toApi).toList());
+        final var profiles = PROFILE_DEFS.stream()
+                .map(this::toApi)
+                .toList();
+        return new ModelProfiles(properties.serverName(), Implementation.STUB, profiles);
     }
 
     @Override
-    protected Lease grant(final ProfileId profileId, final SessionRef sessionRef) {
-        final var profile = def(profileId);
-        final var blockers = leases.values().stream().filter(LeaseRecord::active)
-                .filter(other -> overlaps(def(other.profileId), profile)).map(other -> other.id).toList();
+    protected LeaseRecord grant(final ProfileId profileId, final SessionRef sessionRef) {
+        final var profileDef = profileDefFor(profileId);
+        final var blockers = activeRecords().stream()
+                .filter(other -> overlaps(profileDefFor(other.profileId()), profileDef))
+                .map(LeaseRecord::id)
+                .toList();
         if (!blockers.isEmpty()) {
-            throw new ApiException(HttpStatus.CONFLICT, "lease_conflict",
+            throw new ApiException(CONFLICT, "lease_conflict",
                     "Profile " + profileId + " is blocked by active leases", blockers);
         }
-        final var isLoaded = profile.workers().stream().allMatch(worker -> profile.id().value().equals(loaded.get(worker)));
-        final var lease = new LeaseRecord(profileId, sessionRef, isLoaded ? LeaseState.READY : LeaseState.LOADING);
-        leases.put(lease.id, lease);
+        final var isLoaded = profileDef.workers().stream()
+                .allMatch(worker -> profileDef.id().value().equals(loaded.get(worker)));
+        final var leaseRecord = register(profileId, sessionRef, isLoaded ? LeaseState.READY : LeaseState.LOADING);
         if (!isLoaded) {
-            profile.workers().forEach(worker -> loaded.put(worker, LOADING_PREFIX + profile.id()));
+            profileDef.workers().forEach(worker -> loaded.put(worker, LOADING_PREFIX + profileDef.id()));
             Thread.ofVirtual().start(() -> {
-                sleep(scaled(profile.loadMs()));
-                synchronized (this) {
-                    profile.workers().forEach(worker -> loaded.put(worker, profile.id().value()));
-                    if (lease.state == LeaseState.LOADING) {
-                        lease.readyAt = System.currentTimeMillis();
-                        lease.state = LeaseState.READY;
-                    }
+                sleep(scaled(profileDef.loadMs()));
+                synchronized (lock) {
+                    profileDef.workers().forEach(worker -> loaded.put(worker, profileDef.id().value()));
+                    markReady(leaseRecord);
                 }
             });
         }
-        return lease.toApi();
+        return leaseRecord;
     }
 
     @Override
-    public synchronized DeckState state() {
-        final var workers = loaded.entrySet().stream().map(worker -> {
-            final var busy = leases.values().stream()
-                    .anyMatch(lease -> lease.active() && def(lease.profileId).workers().contains(worker.getKey()));
-            return new Worker().id(worker.getKey()).loadedProfile(worker.getValue())
-                    .state(worker.getValue().startsWith(LOADING_PREFIX) ? WorkerState.LOADING : busy ? WorkerState.LEASED : WorkerState.IDLE);
-        }).toList();
-        return new DeckState(props.serverName(), Implementation.STUB, modelProfiles().getProfiles(), recent())
+    public DeckState state() {
+        final List<Worker> workers;
+        synchronized (lock) {
+            final var activeLeaseRecords = activeRecords();
+            workers = loaded.entrySet().stream()
+                    .map(worker -> {
+                        final var isLeased = activeLeaseRecords.stream()
+                                .anyMatch(leaseRecord -> profileDefFor(leaseRecord.profileId()).workers().contains(worker.getKey()));
+                        return new Worker().id(worker.getKey()).loadedProfile(worker.getValue())
+                                .state(worker.getValue().startsWith(LOADING_PREFIX) ? WorkerState.LOADING
+                                        : isLeased ? WorkerState.LEASED : WorkerState.IDLE);
+                    })
+                    .toList();
+        }
+        return new DeckState(properties.serverName(), Implementation.STUB, modelProfiles().getProfiles(), recentLeases())
                 .workers(workers).spendUsd(0.0);
     }
 
     @Override
     public StreamingResponseBody chat(final LeaseId leaseId, final @Nullable String providerAuthorization, final JsonNode request) {
-        final var lease = activeRecord(leaseId);
-        final var profile = def(lease.profileId);
-        final var maxTokens = (int) Math.max(1, Math.min(Json.number(request.path("max_tokens")) == 0 ? DEFAULT_MAX_TOKENS
+        final var leaseRecord = activeRecord(leaseId);
+        final var profileDef = profileDefFor(leaseRecord.profileId());
+        final var maxTokens = (int) max(1, min(Json.number(request.path("max_tokens")) == 0 ? DEFAULT_MAX_TOKENS
                 : Json.number(request.path("max_tokens")), WORDS.length));
         final var includeUsage = Json.bool(request.path("stream_options").path("include_usage"));
-        final var prompt = Json.promptTokens(request);
-        final var speed = speedAt(profile, prompt);
+        final var promptTokens = Json.promptTokens(request);
+        final var speed = speedAt(profileDef, promptTokens);
         final StreamingResponseBody body = out -> {
-            final var deadline = System.currentTimeMillis() + LOADING_WAIT.toMillis();
-            while (lease.state == LeaseState.LOADING && System.currentTimeMillis() < deadline) {
-                sleep(LOADING_POLL_MS);
+            final var deadline = currentTimeMillis() + Duration.ofSeconds(stubProperties.loadingWaitSeconds()).toMillis();
+            while (isLoading(leaseRecord) && currentTimeMillis() < deadline) {
+                sleep(stubProperties.loadingPollMillis());
             }
-            sleep(scaled(profile.ttftMs()) + Math.round(prompt * MILLIS_PER_SECOND / speed.prefillTps() * stub.timeFactor()));
-            final var id = "chatcmpl-" + lease.id;
-            final var created = Instant.now().getEpochSecond();
+            sleep(scaled(profileDef.ttftMs()) + round(promptTokens * MILLIS_PER_SECOND / speed.prefillTps() * stubProperties.timeFactor()));
+            final var id = "chatcmpl-" + leaseRecord.id();
+            final var createdAt = Instant.now().getEpochSecond();
             for (int tokenIndex = 0; tokenIndex < maxTokens; tokenIndex++) {
-                final var chunk = mapper.createObjectNode();
-                chunk.put("id", id).put("object", "chat.completion.chunk").put("created", created).put("model", profile.model().value());
-                final var choice = chunk.putArray("choices").addObject();
+                final var contentChunk = mapper.createObjectNode();
+                contentChunk.put("id", id).put("object", "chat.completion.chunk").put("created", createdAt).put("model", profileDef.model().value());
+                final var choice = contentChunk.putArray("choices").addObject();
                 choice.put("index", 0);
                 final var delta = choice.putObject("delta");
                 if (tokenIndex == 0) {
@@ -207,42 +230,42 @@ public class StubServer extends AbstractDeckServer {
                 }
                 delta.put("content", WORDS[tokenIndex] + " ");
                 choice.putNull("finish_reason");
-                write(out, chunk.toString());
-                sleep(Math.round(MILLIS_PER_SECOND / speed.decodeTps() * stub.timeFactor()));
+                write(out, contentChunk.toString());
+                sleep(round(MILLIS_PER_SECOND / speed.decodeTps() * stubProperties.timeFactor()));
             }
-            final var last = mapper.createObjectNode();
-            last.put("id", id).put("object", "chat.completion.chunk").put("created", created).put("model", profile.model().value());
-            final var choice = last.putArray("choices").addObject();
+            final var finishChunk = mapper.createObjectNode();
+            finishChunk.put("id", id).put("object", "chat.completion.chunk").put("created", createdAt).put("model", profileDef.model().value());
+            final var choice = finishChunk.putArray("choices").addObject();
             choice.put("index", 0);
             choice.putObject("delta");
             choice.put("finish_reason", "stop");
-            write(out, last.toString());
+            write(out, finishChunk.toString());
             if (includeUsage) {
-                final var usage = mapper.createObjectNode();
-                usage.put("id", id).put("object", "chat.completion.chunk").put("created", created).put("model", profile.model().value());
-                usage.putArray("choices");
-                final var counts = usage.putObject("usage");
-                counts.put("prompt_tokens", prompt).put("completion_tokens", maxTokens).put("total_tokens", prompt + maxTokens);
-                counts.putObject("prompt_tokens_details").put("cached_tokens", 0);
-                write(out, usage.toString());
+                final var usageChunk = mapper.createObjectNode();
+                usageChunk.put("id", id).put("object", "chat.completion.chunk").put("created", createdAt).put("model", profileDef.model().value());
+                usageChunk.putArray("choices");
+                final var usage = usageChunk.putObject("usage");
+                usage.put("prompt_tokens", promptTokens).put("completion_tokens", maxTokens).put("total_tokens", promptTokens + maxTokens);
+                usage.putObject("prompt_tokens_details").put("cached_tokens", 0);
+                write(out, usageChunk.toString());
             }
-            lease.addUsage(prompt, 0, maxTokens, false);
-            out.write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
+            addUsage(leaseRecord, promptTokens, 0, maxTokens, false);
+            out.write("data: [DONE]\n\n".getBytes(UTF_8));
             out.flush();
         };
         return body;
     }
 
     private static void write(final java.io.OutputStream out, final String json) throws java.io.IOException {
-        out.write(("data: " + json + "\n\n").getBytes(StandardCharsets.UTF_8));
+        out.write(("data: " + json + "\n\n").getBytes(UTF_8));
         out.flush();
     }
 
-    private static void sleep(final long ms) {
+    private static void sleep(final long millis) {
         try {
-            Thread.sleep(Math.max(0, ms));
+            Thread.sleep(max(0, millis));
         } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
+            currentThread().interrupt();
         }
     }
 }

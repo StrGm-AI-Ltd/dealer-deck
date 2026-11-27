@@ -1,7 +1,17 @@
 package ai.strgm.dealer;
 
-import ai.strgm.dealer.DealerProperties.ClientDef;
+import static java.lang.Thread.currentThread;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.springframework.http.HttpStatus.BAD_REQUEST;
+import static org.springframework.http.HttpStatus.NOT_FOUND;
+import static org.springframework.http.HttpStatus.OK;
+import static org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
+import static org.springframework.http.HttpStatus.UNAUTHORIZED;
+import static org.springframework.http.MediaType.TEXT_EVENT_STREAM;
+
+import ai.strgm.dealer.DealerProperties.ClientConfig;
 import ai.strgm.types.ModelName;
+import ai.strgm.types.Priority;
 import ai.strgm.types.SessionId;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.BufferedReader;
@@ -11,11 +21,9 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import org.jspecify.annotations.Nullable;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -35,72 +43,80 @@ import tools.jackson.databind.node.ObjectNode;
 public class ChatController {
     private final Scheduler scheduler;
     private final ObjectMapper mapper;
-    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
-    /** How long one completion may take, streaming included. */
-    private static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(5);
-    private static final int MAX_SESSION_ID_LENGTH = 200;
     /** The prefix of a server-sent event's data line. */
     private static final String SSE_DATA_PREFIX = "data:";
 
-    private final HttpClient http = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
+    private final HttpClient http;
+    /** How long one completion may take, streaming included. */
+    private final Duration requestTimeout;
 
-    public ChatController(final Scheduler scheduler, final ObjectMapper mapper) {
+    public ChatController(final Scheduler scheduler, final ObjectMapper mapper, final DealerProperties properties) {
         this.scheduler = scheduler;
         this.mapper = mapper;
+        this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(properties.timeouts().chatConnectSeconds())).build();
+        this.requestTimeout = Duration.ofMinutes(properties.timeouts().chatRequestMinutes());
     }
 
     @PostMapping("/v1/chat/completions")
-    public ResponseEntity<StreamingResponseBody> chat(@RequestBody final String raw,
-            @RequestHeader(value = "X-Session-Id", required = false) final @Nullable String sessionId,
+    public ResponseEntity<StreamingResponseBody> chat(@RequestBody final String rawBody,
+            @RequestHeader(value = "X-Session-Id", required = false) final @Nullable String sessionIdHeader,
             @RequestHeader(value = "X-Request-Priority", required = false) final @Nullable Integer requestPriority,
             final HttpServletRequest servletRequest) {
-        final var client = (ClientDef) servletRequest.getAttribute(AuthFilter.CLIENT);
-        if (client == null) {
-            throw new ApiException(HttpStatus.UNAUTHORIZED, "authentication_error", "A client API key is required");
+        final var clientConfig = (ClientConfig) servletRequest.getAttribute(AuthFilter.CLIENT_CONFIG_ATTRIBUTE);
+        if (clientConfig == null) {
+            throw new ApiException(UNAUTHORIZED, "authentication_error", "A client API key is required");
         }
         final JsonNode body;
         try {
-            body = mapper.readTree(raw);
+            body = mapper.readTree(rawBody);
         } catch (JacksonException exception) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "The request body isn't valid JSON");
+            throw new ApiException(BAD_REQUEST, "invalid_request_error", "The request body isn't valid JSON");
         }
         if (!(body.path("stream").isBoolean() && body.path("stream").booleanValue())) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "DEALER streams only in v0.5: set \"stream\": true");
+            throw new ApiException(BAD_REQUEST, "invalid_request_error", "DEALER streams only in v0.5: set \"stream\": true");
         }
-        if (sessionId == null || sessionId.isBlank() || sessionId.length() > MAX_SESSION_ID_LENGTH) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "Missing or invalid required header X-Session-Id");
+        if (sessionIdHeader == null) {
+            throw invalidSessionId();
         }
-        if (requestPriority != null && !Priorities.RANGE.contains(requestPriority)) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error",
-                    "X-Request-Priority must be between " + Priorities.MIN + " and " + Priorities.MAX, "X-Request-Priority");
+        final SessionId sessionId;
+        try {
+            sessionId = new SessionId(sessionIdHeader);
+        } catch (IllegalArgumentException exception) {
+            throw invalidSessionId();
+        }
+        final Priority priority;
+        try {
+            priority = requestPriority == null ? Priority.DEFAULT_REQUEST : new Priority(requestPriority);
+        } catch (IllegalArgumentException exception) {
+            throw new ApiException(BAD_REQUEST, "invalid_request_error",
+                    "X-Request-Priority must be between " + Priority.MIN + " and " + Priority.MAX, "X-Request-Priority");
         }
         final var requestedModel = body.path("model").isString() ? body.path("model").asString() : "";
         if (requestedModel.isBlank()) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request_error", "Missing \"model\"");
+            throw new ApiException(BAD_REQUEST, "invalid_request_error", "Missing \"model\"");
         }
-        final var model = new ModelName(requestedModel);
+        final var modelName = new ModelName(requestedModel);
         // TODO(#62): say which DECK servers and model profiles the client may use, instead of its external-routing flag
-        if (scheduler.candidates(client, model).isEmpty()) {
-            throw new ApiException(HttpStatus.NOT_FOUND, "model_not_found",
-                    "No DECK profile serves \"" + model + "\" for client " + client.name()
-                            + (client.externalRouting() ? "" : " (external routing is off for this client)"));
+        if (scheduler.candidateProfiles(clientConfig, modelName).isEmpty()) {
+            throw new ApiException(NOT_FOUND, "model_not_found",
+                    "No DECK profile serves \"" + modelName + "\" for client " + clientConfig.name()
+                            + (clientConfig.externalRouting() ? "" : " (external routing is off for this client)"));
         }
-        final var priority = requestPriority == null ? Priorities.DEFAULT_REQUEST : requestPriority;
-        final var placement = scheduler.acquire(client, new SessionId(sessionId), model, priority);
-        final var server = placement.profile().server();
-        final var forward = (ObjectNode) body.deepCopy();
-        forward.put("model", placement.profile().profile().getModel().value());
+        final var placement = scheduler.acquire(clientConfig, sessionId, modelName, priority);
+        final var serverRef = placement.profileRef().serverRef();
+        final var upstreamBody = (ObjectNode) body.deepCopy();
+        upstreamBody.put("model", placement.profileRef().profile().getModel().value());
         final var clientWantsUsage = body.path("stream_options").path("include_usage").isBoolean()
                 && body.path("stream_options").path("include_usage").booleanValue();
-        forward.putObject("stream_options").put("include_usage", true);
-        final var request = HttpRequest.newBuilder(URI.create(server.def().url() + "/v1/chat/completions"))
-                .header("Authorization", "Bearer " + server.def().key())
+        upstreamBody.putObject("stream_options").put("include_usage", true);
+        final var request = HttpRequest.newBuilder(URI.create(serverRef.config().url() + "/v1/chat/completions"))
+                .header("Authorization", "Bearer " + serverRef.config().key())
                 .header("X-Lease-Id", placement.leaseId().value())
                 .header("Content-Type", "application/json")
-                .timeout(REQUEST_TIMEOUT)
-                .POST(HttpRequest.BodyPublishers.ofString(forward.toString()));
-        if (server.providerAuthorization() != null) {
-            request.header("X-Provider-Authorization", server.providerAuthorization());
+                .timeout(requestTimeout)
+                .POST(HttpRequest.BodyPublishers.ofString(upstreamBody.toString()));
+        if (serverRef.providerAuthorization() != null) {
+            request.header("X-Provider-Authorization", serverRef.providerAuthorization());
         }
         final HttpResponse<InputStream> response;
         try {
@@ -108,15 +124,15 @@ public class ChatController {
         } catch (Exception exception) {
             scheduler.release(placement, 0, 0, 0);
             if (exception instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
+                currentThread().interrupt();
             }
-            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "server_error", "DECK server " + server.name() + " unreachable");
+            throw new ApiException(SERVICE_UNAVAILABLE, "server_error", "DECK server " + serverRef.name() + " unreachable");
         }
-        if (response.statusCode() != HttpStatus.OK.value()) {
+        if (response.statusCode() != OK.value()) {
             scheduler.release(placement, 0, 0, 0);
             String text;
-            try (var in = response.body()) {
-                text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            try (var responseBody = response.body()) {
+                text = new String(responseBody.readAllBytes(), UTF_8);
             } catch (Exception exception) {
                 text = "";
             }
@@ -124,22 +140,22 @@ public class ChatController {
                     ? "{\"error\":{\"message\":\"DECK error " + response.statusCode() + "\",\"type\":\"server_error\"}}" : text);
         }
         final StreamingResponseBody stream = out -> {
-            long prompt = 0;
-            long cached = 0;
-            long completion = 0;
+            long promptTokens = 0;
+            long cachedTokens = 0;
+            long completionTokens = 0;
             boolean skipBlank = false;
-            try (var reader = new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
+            try (var reader = new BufferedReader(new InputStreamReader(response.body(), UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     if (line.startsWith(SSE_DATA_PREFIX)) {
-                        final var data = line.substring(SSE_DATA_PREFIX.length()).trim();
-                        if (data.startsWith("{")) {
-                            final var chunk = mapper.readTree(data);
+                        final var eventData = line.substring(SSE_DATA_PREFIX.length()).trim();
+                        if (eventData.startsWith("{")) {
+                            final var chunk = mapper.readTree(eventData);
                             final var usage = chunk.path("usage");
                             if (usage.isObject()) {
-                                prompt = number(usage.path("prompt_tokens"));
-                                cached = number(usage.path("prompt_tokens_details").path("cached_tokens"));
-                                completion = number(usage.path("completion_tokens"));
+                                promptTokens = number(usage.path("prompt_tokens"));
+                                cachedTokens = number(usage.path("prompt_tokens_details").path("cached_tokens"));
+                                completionTokens = number(usage.path("completion_tokens"));
                                 // Nebius attaches usage to every chunk: only a usage-only chunk (no choices) is the
                                 // one the client didn't ask for, so a chunk that carries text is always forwarded
                                 if (!clientWantsUsage && chunk.path("choices").isEmpty()) {
@@ -153,19 +169,23 @@ public class ChatController {
                         skipBlank = false;
                         continue;
                     }
-                    out.write((line + "\n").getBytes(StandardCharsets.UTF_8));
+                    out.write((line + "\n").getBytes(UTF_8));
                     if (line.isEmpty()) {
                         out.flush();
                     }
                 }
             } finally {
-                scheduler.release(placement, prompt, cached, completion);
+                scheduler.release(placement, promptTokens, cachedTokens, completionTokens);
             }
         };
-        return ResponseEntity.ok().contentType(MediaType.TEXT_EVENT_STREAM)
-                .header("X-Dealer-Server", server.name().value())
-                .header("X-Dealer-Profile", placement.profile().profile().getId().value())
+        return ResponseEntity.ok().contentType(TEXT_EVENT_STREAM)
+                .header("X-Dealer-Server", serverRef.name().value())
+                .header("X-Dealer-Profile", placement.profileRef().profile().getId().value())
                 .body(stream);
+    }
+
+    private static ApiException invalidSessionId() {
+        return new ApiException(BAD_REQUEST, "invalid_request_error", "Missing or invalid required header X-Session-Id");
     }
 
     private static long number(final JsonNode node) {

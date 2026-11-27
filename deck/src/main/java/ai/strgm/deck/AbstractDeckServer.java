@@ -1,75 +1,127 @@
 package ai.strgm.deck;
 
+import static java.lang.Math.max;
+import static org.springframework.http.HttpStatus.CONFLICT;
+import static org.springframework.http.HttpStatus.NOT_FOUND;
+
 import ai.strgm.deck.api.model.Lease;
 import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ProfileId;
 import ai.strgm.types.SessionRef;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.jspecify.annotations.Nullable;
-import org.springframework.http.HttpStatus;
 import tools.jackson.databind.ObjectMapper;
 
 /**
  * What both DECK implementations share: the lease store, and the lease operations that don't depend on how a
- * server manages its capacity. A lease's state changes only under this object's lock.
+ * server manages its capacity. One lock, {@link #lock}, guards the store, every lease's state and usage, and a
+ * server's own capacity state, so a capacity check and the grant it allows happen together.
  */
 public abstract class AbstractDeckServer implements DeckServer {
-    /** How many of the most recent leases {@link #state()} reports. */
-    private static final int RECENT_LEASES = 30;
-
-    protected final DeckProperties props;
+    protected final DeckProperties properties;
     protected final ObjectMapper mapper;
+    /**
+     * Guards the lease store and a subclass's own capacity state (e.g. which profile each simulated worker has
+     * loaded). A private object rather than this server's monitor, which any holder of the bean could lock.
+     */
+    protected final Object lock = new Object();
     /** Every lease this server has granted, oldest first. */
-    protected final Map<LeaseId, LeaseRecord> leases = Collections.synchronizedMap(new LinkedHashMap<>());
+    // TODO(#103): keep the leases in a persistent store, so a DECK restart doesn't lose them
+    private final Map<LeaseId, LeaseRecord> leases = new LinkedHashMap<>();
 
-    protected AbstractDeckServer(final DeckProperties props, final ObjectMapper mapper) {
-        this.props = props;
+    protected AbstractDeckServer(final DeckProperties properties, final ObjectMapper mapper) {
+        this.properties = properties;
         this.mapper = mapper;
     }
 
     protected static ApiException unknownProfile(final ProfileId profileId) {
-        return new ApiException(HttpStatus.NOT_FOUND, "not_found", "Unknown profile: " + profileId);
+        return new ApiException(NOT_FOUND, "not_found", "Unknown profile: " + profileId);
     }
 
-    protected LeaseRecord record(final LeaseId leaseId) {
-        final var lease = leases.get(leaseId);
-        if (lease == null) {
-            throw new ApiException(HttpStatus.NOT_FOUND, "not_found", "Unknown lease: " + leaseId);
+    private LeaseRecord record(final LeaseId leaseId) {
+        final var leaseRecord = leases.get(leaseId);
+        if (leaseRecord == null) {
+            throw new ApiException(NOT_FOUND, "not_found", "Unknown lease: " + leaseId);
         }
-        return lease;
+        return leaseRecord;
     }
 
     /** The lease a chat request names, which must still be active. */
     protected LeaseRecord activeRecord(final LeaseId leaseId) {
-        final var lease = record(leaseId);
-        if (!lease.active()) {
-            throw new ApiException(HttpStatus.CONFLICT, "lease_inactive", "Lease " + leaseId + " is " + lease.state.getValue());
+        synchronized (lock) {
+            final var leaseRecord = record(leaseId);
+            if (!leaseRecord.active()) {
+                throw new ApiException(CONFLICT, "lease_inactive", "Lease " + leaseId + " is " + leaseRecord.state().getValue());
+            }
+            return leaseRecord;
         }
-        return lease;
+    }
+
+    /** The active leases, oldest first. Their ids and profiles are safe to read without the lock: they never change. */
+    protected List<LeaseRecord> activeRecords() {
+        synchronized (lock) {
+            return leases.values().stream()
+                    .filter(LeaseRecord::active)
+                    .toList();
+        }
     }
 
     /** The ids of the active leases on {@code profileId}. */
-    protected List<LeaseId> active(final ProfileId profileId) {
-        synchronized (leases) {
-            return leases.values().stream().filter(lease -> lease.active() && lease.profileId.equals(profileId)).map(lease -> lease.id).toList();
+    protected List<LeaseId> activeLeaseIds(final ProfileId profileId) {
+        synchronized (lock) {
+            return leases.values().stream()
+                    .filter(leaseRecord -> leaseRecord.active() && leaseRecord.profileId().equals(profileId))
+                    .map(LeaseRecord::id)
+                    .toList();
         }
     }
 
-    /** Every lease, oldest first. */
-    protected List<LeaseRecord> all() {
-        synchronized (leases) {
-            return List.copyOf(leases.values());
+    /** Stores a new lease. For {@link #grant}, which runs under the lock. */
+    protected LeaseRecord register(final ProfileId profileId, final SessionRef sessionRef, final LeaseState state) {
+        synchronized (lock) {
+            final var leaseRecord = new LeaseRecord(profileId, sessionRef, state);
+            leases.put(leaseRecord.id(), leaseRecord);
+            return leaseRecord;
         }
     }
 
-    /** The {@value #RECENT_LEASES} most recent leases, oldest first, for {@link #state()}. */
-    protected List<Lease> recent() {
-        final var all = all();
-        return all.subList(Math.max(0, all.size() - RECENT_LEASES), all.size()).stream().map(LeaseRecord::toApi).toList();
+    /** A loading lease becomes ready, e.g. once a simulated load finishes. */
+    protected void markReady(final LeaseRecord leaseRecord) {
+        synchronized (lock) {
+            leaseRecord.markReady();
+        }
+    }
+
+    protected boolean isLoading(final LeaseRecord leaseRecord) {
+        synchronized (lock) {
+            return leaseRecord.state() == LeaseState.LOADING;
+        }
+    }
+
+    /** Adds a completion's tokens to its lease; {@code estimated} when the provider sent no usage. */
+    protected void addUsage(final LeaseRecord leaseRecord, final long promptTokens, final long cachedTokens, final long completionTokens,
+            final boolean estimated) {
+        synchronized (lock) {
+            leaseRecord.addUsage(promptTokens, cachedTokens, completionTokens, estimated);
+        }
+    }
+
+    /** Every lease, oldest first, as the API reports it. */
+    protected List<Lease> allLeases() {
+        synchronized (lock) {
+            return leases.values().stream()
+                    .map(LeaseRecord::toApi)
+                    .toList();
+        }
+    }
+
+    /** The most recent leases ({@code deck.recent-leases}), oldest first, for {@link #state()}. */
+    protected List<Lease> recentLeases() {
+        final var allLeases = allLeases();
+        return allLeases.subList(max(0, allLeases.size() - properties.recentLeases()), allLeases.size());
     }
 
     /**
@@ -78,51 +130,55 @@ public abstract class AbstractDeckServer implements DeckServer {
      * would ever release (#65).
      */
     @Override
-    public final synchronized Acquisition acquire(final ProfileId profileId, final SessionRef sessionRef) {
-        final var held = activeLease(profileId, sessionRef);
-        return held != null ? new Acquisition(held.toApi(), false) : new Acquisition(grant(profileId, sessionRef), true);
-    }
-
-    /** Grants a new lease, or throws if the profile is unknown or has no capacity. Runs under this object's lock. */
-    protected abstract Lease grant(ProfileId profileId, SessionRef sessionRef);
-
-    private @Nullable LeaseRecord activeLease(final ProfileId profileId, final SessionRef sessionRef) {
-        synchronized (leases) {
-            return leases.values().stream()
-                    .filter(lease -> lease.active() && lease.profileId.equals(profileId) && lease.sessionRef.equals(sessionRef))
-                    .findFirst().orElse(null);
+    public final Acquisition acquire(final ProfileId profileId, final SessionRef sessionRef) {
+        synchronized (lock) {
+            final var heldLeaseRecord = leases.values().stream()
+                    .filter(leaseRecord -> leaseRecord.active() && leaseRecord.profileId().equals(profileId)
+                            && leaseRecord.sessionRef().equals(sessionRef))
+                    .findFirst();
+            return heldLeaseRecord.isPresent() ? new Acquisition(heldLeaseRecord.get().toApi(), false)
+                    : new Acquisition(grant(profileId, sessionRef).toApi(), true);
         }
     }
+
+    /**
+     * Grants a new lease with {@link #register}, or throws if the profile is unknown or has no capacity. Runs under
+     * the lock, so the capacity it checks can't change before the lease is stored.
+     */
+    protected abstract LeaseRecord grant(ProfileId profileId, SessionRef sessionRef);
 
     @Override
     public Lease get(final LeaseId leaseId) {
-        return record(leaseId).toApi();
-    }
-
-    @Override
-    public synchronized List<Lease> leases(final @Nullable ProfileId profileId, final @Nullable SessionRef sessionRef) {
-        synchronized (leases) {
-            return leases.values().stream().filter(LeaseRecord::active)
-                    .filter(lease -> profileId == null || lease.profileId.equals(profileId))
-                    .filter(lease -> sessionRef == null || sessionRef.equals(lease.sessionRef))
-                    .map(LeaseRecord::toApi).toList();
+        synchronized (lock) {
+            return record(leaseId).toApi();
         }
     }
 
     @Override
-    public synchronized void release(final LeaseId leaseId) {
-        final var lease = record(leaseId);
-        if (lease.active()) {
-            lease.state = LeaseState.RELEASED;
+    public List<Lease> leases(final @Nullable ProfileId profileId, final @Nullable SessionRef sessionRef) {
+        synchronized (lock) {
+            return leases.values().stream()
+                    .filter(LeaseRecord::active)
+                    .filter(leaseRecord -> profileId == null || leaseRecord.profileId().equals(profileId))
+                    .filter(leaseRecord -> sessionRef == null || sessionRef.equals(leaseRecord.sessionRef()))
+                    .map(LeaseRecord::toApi)
+                    .toList();
         }
     }
 
     @Override
-    public synchronized Lease evict(final LeaseId leaseId) {
-        final var lease = record(leaseId);
-        if (lease.active()) {
-            lease.state = LeaseState.EVICTED;
+    public void release(final LeaseId leaseId) {
+        synchronized (lock) {
+            record(leaseId).end(LeaseState.RELEASED);
         }
-        return lease.toApi();
+    }
+
+    @Override
+    public Lease evict(final LeaseId leaseId) {
+        synchronized (lock) {
+            final var leaseRecord = record(leaseId);
+            leaseRecord.end(LeaseState.EVICTED);
+            return leaseRecord.toApi();
+        }
     }
 }
