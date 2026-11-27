@@ -95,6 +95,30 @@ public class StubServer extends AbstractDeckServer {
         return round(millis * stubProperties.timeFactor());
     }
 
+    /** A speed point as the profile advertises it: faster by the time factor the stub runs at. */
+    private SpeedPoint advertisedSpeed(final Speed speed) {
+        return new SpeedPoint(speed.contextTokens(), speed.prefillTps() / stubProperties.timeFactor(), speed.decodeTps() / stubProperties.timeFactor());
+    }
+
+    /**
+     * The time to the first token: the profile's fixed latency, then the prompt's prefill at the profile's speed for its
+     * size, both scaled by the time factor.
+     */
+    private long timeToFirstTokenMillis(final ProfileDef profileDef, final long promptTokens, final Speed speed) {
+        return scaled(profileDef.ttftMs()) + round(promptTokens * MILLIS_PER_SECOND / speed.prefillTps() * stubProperties.timeFactor());
+    }
+
+    /** The time between tokens at the profile's decode speed, scaled by the time factor. */
+    private long millisPerToken(final Speed speed) {
+        return round(MILLIS_PER_SECOND / speed.decodeTps() * stubProperties.timeFactor());
+    }
+
+    /** How many tokens the stub streams: the request's {@code max_tokens}, or the default when it names none, between one and the words it has. */
+    private static int completionTokens(final JsonNode chatRequest) {
+        final var requestedTokens = Json.number(chatRequest.path("max_tokens"));
+        return (int) max(1, min(requestedTokens == 0 ? DEFAULT_MAX_TOKENS : requestedTokens, WORDS.length));
+    }
+
     private ProfileDef profileDefFor(final ProfileId id) {
         return PROFILE_DEFS.stream()
                 .filter(definition -> definition.id().equals(id))
@@ -139,8 +163,7 @@ public class StubServer extends AbstractDeckServer {
                 .map(other -> new LeaseReduction(other.id(), LEASES_PER_PROFILE))
                 .toList();
         final var speeds = profileDef.speeds().stream()
-                .map(point -> new SpeedPoint(point.contextTokens(),
-                        point.prefillTps() / stubProperties.timeFactor(), point.decodeTps() / stubProperties.timeFactor()))
+                .map(this::advertisedSpeed)
                 .toList();
         return new OfferedProfile(profileDef.id(), profileDef.model(), null, profileDef.contextWindow(),
                 new Quantization(profileDef.quantization(), profileDef.bitsPerWeight()), isLoaded ? Readiness.LOADED : Readiness.UNLOADED,
@@ -202,8 +225,7 @@ public class StubServer extends AbstractDeckServer {
     public ChatStream openChatStream(final LeaseId leaseId, final @Nullable String providerAuthorization, final JsonNode chatRequest) {
         final var leaseRecord = activeLeaseRecord(leaseId);
         final var profileDef = profileDefFor(leaseRecord.profileId());
-        final var maxTokens = (int) max(1, min(Json.number(chatRequest.path("max_tokens")) == 0 ? DEFAULT_MAX_TOKENS
-                : Json.number(chatRequest.path("max_tokens")), WORDS.length));
+        final var completionTokens = completionTokens(chatRequest);
         final var includeUsage = Json.bool(chatRequest.path("stream_options").path("include_usage"));
         final var promptTokens = Json.promptTokens(chatRequest);
         final var speed = speedAt(profileDef, promptTokens);
@@ -212,10 +234,10 @@ public class StubServer extends AbstractDeckServer {
             while (isLoading(leaseRecord) && Instant.now().isBefore(deadline)) {
                 sleep(stubProperties.loadingPollMillis());
             }
-            sleep(scaled(profileDef.ttftMs()) + round(promptTokens * MILLIS_PER_SECOND / speed.prefillTps() * stubProperties.timeFactor()));
+            sleep(timeToFirstTokenMillis(profileDef, promptTokens, speed));
             final var id = "chatcmpl-" + leaseRecord.id();
             final var createdAt = Instant.now();
-            for (int tokenIndex = 0; tokenIndex < maxTokens; tokenIndex++) {
+            for (int tokenIndex = 0; tokenIndex < completionTokens; tokenIndex++) {
                 final var contentChunk = mapper.createObjectNode();
                 contentChunk.put("id", id).put("object", "chat.completion.chunk").put("created", createdAt.getEpochSecond())
                         .put("model", profileDef.model().value());
@@ -228,7 +250,7 @@ public class StubServer extends AbstractDeckServer {
                 delta.put("content", WORDS[tokenIndex] + " ");
                 choice.putNull("finish_reason");
                 writeEvent(out, contentChunk.toString());
-                sleep(round(MILLIS_PER_SECOND / speed.decodeTps() * stubProperties.timeFactor()));
+                sleep(millisPerToken(speed));
             }
             final var finishChunk = mapper.createObjectNode();
             finishChunk.put("id", id).put("object", "chat.completion.chunk").put("created", createdAt.getEpochSecond())
@@ -244,11 +266,11 @@ public class StubServer extends AbstractDeckServer {
                         .put("model", profileDef.model().value());
                 usageChunk.putArray("choices");
                 final var usage = usageChunk.putObject("usage");
-                usage.put("prompt_tokens", promptTokens).put("completion_tokens", maxTokens).put("total_tokens", promptTokens + maxTokens);
+                usage.put("prompt_tokens", promptTokens).put("completion_tokens", completionTokens).put("total_tokens", promptTokens + completionTokens);
                 usage.putObject("prompt_tokens_details").put("cached_tokens", 0);
                 writeEvent(out, usageChunk.toString());
             }
-            addUsage(leaseRecord, promptTokens, 0, maxTokens, false);
+            addUsage(leaseRecord, promptTokens, 0, completionTokens, false);
             out.write("data: [DONE]\n\n".getBytes(UTF_8));
             out.flush();
         };

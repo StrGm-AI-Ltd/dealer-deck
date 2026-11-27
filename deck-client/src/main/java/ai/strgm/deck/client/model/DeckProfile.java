@@ -2,6 +2,7 @@ package ai.strgm.deck.client.model;
 
 import ai.strgm.types.ModelName;
 import ai.strgm.types.ProfileId;
+import ai.strgm.types.TokenPrices;
 import java.util.List;
 
 /**
@@ -10,10 +11,9 @@ import java.util.List;
  */
 public record DeckProfile(ProfileId id, ModelName modelName, int contextWindow, TokenPrices prices, List<ProfileId> reducedProfileIds) {
 
-    /** Prices per million tokens; zero where DECK states none. */
-    // TODO(#104): money amounts with their currency, instead of bare doubles in an implied currency
-    public record TokenPrices(double inputPerMTok, double cachedInputPerMTok, double outputPerMTok) {
-        public static final TokenPrices NONE = new TokenPrices(0, 0, 0);
+    /** Whether the profile's context window holds at least {@code minContextWindow} tokens. */
+    public boolean fitsContext(final int minContextWindow) {
+        return contextWindow >= minContextWindow;
     }
 
     /** Whether a lease on this profile reduces the leases {@code otherId} can grant. Any reduction counts. */

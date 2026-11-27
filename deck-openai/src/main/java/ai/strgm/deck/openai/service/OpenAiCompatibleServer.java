@@ -1,7 +1,6 @@
 package ai.strgm.deck.openai.service;
 
 import static ai.strgm.util.Nulls.mapNullable;
-import static java.lang.Math.max;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import ai.strgm.deck.openai.client.ProviderClient;
@@ -28,6 +27,7 @@ import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.ProfileId;
 import ai.strgm.types.SessionRef;
+import ai.strgm.types.TokenPrices;
 import java.util.List;
 import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Component;
@@ -43,8 +43,6 @@ import tools.jackson.databind.ObjectMapper;
  */
 @Component
 public class OpenAiCompatibleServer extends AbstractDeckServer {
-    /** Prices are per million tokens. */
-    private static final double TOKENS_PER_MILLION = 1_000_000.0;
 
     private final ProviderClient providerClient;
     private final UpstreamProperties upstreamProperties;
@@ -90,20 +88,24 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
     protected LeaseRecord grantLease(final ProfileId profileId, final SessionRef sessionRef) {
         final var upstreamModel = upstreamModelFor(profileId);
         final var activeLeaseIds = activeLeaseIds(profileId);
-        if (upstreamModel.maxLeases() != null && activeLeaseIds.size() >= upstreamModel.maxLeases()) {
+        if (leaseBudgetInUse(upstreamModel, activeLeaseIds.size())) {
             throw new LeaseConflictException("The instance budget of " + profileId + " (" + upstreamModel.maxLeases() + ") is in use",
                     activeLeaseIds);
         }
         return registerLease(profileId, sessionRef, LeaseState.READY);
     }
 
+    /** Whether {@code upstreamModel}'s lease budget, if it has one, is used up by {@code activeLeases}. */
+    private static boolean leaseBudgetInUse(final UpstreamModel upstreamModel, final int activeLeases) {
+        return upstreamModel.maxLeases() != null && activeLeases >= upstreamModel.maxLeases();
+    }
+
     // TODO(#104): a money amount with its currency, instead of a bare double
     private double cost(final LeaseSnapshot lease) {
         final var upstreamModel = upstreamModelFor(lease.profileId());
         final var usage = lease.usage();
-        return ((usage.promptTokens() - usage.cachedTokens()) * upstreamModel.inputPerMTok()
-                + usage.cachedTokens() * upstreamModel.cachedInputPerMTok()
-                + usage.completionTokens() * upstreamModel.outputPerMTok()) / TOKENS_PER_MILLION;
+        return new TokenPrices(upstreamModel.inputPerMTok(), upstreamModel.cachedInputPerMTok(), upstreamModel.outputPerMTok())
+                .costUsd(usage.promptTokens(), usage.cachedTokens(), usage.completionTokens());
     }
 
     @Override
@@ -140,7 +142,7 @@ public class OpenAiCompatibleServer extends AbstractDeckServer {
                 }
             } finally {
                 if (!sawUsage) {
-                    addUsage(leaseRecord, promptTokens, 0, max(1, completionChars / Json.CHARS_PER_TOKEN), true);
+                    addUsage(leaseRecord, promptTokens, 0, Json.estimatedTokens(completionChars), true);
                 }
                 out.flush();
             }

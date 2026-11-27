@@ -31,6 +31,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -69,6 +70,10 @@ public class Scheduler {
     private static final Pattern VIRTUAL_MODEL_NAME = Pattern.compile("auto-(\\d+)k");
     /** An {@code auto-<N>k} model that isn't one of the {@link AutoTier}s needs N thousand tokens. */
     private static final int TOKENS_PER_K = 1000;
+    /** The order dispatch places lease requests in: higher client priority first, then higher request priority, then first come. */
+    private static final Comparator<LeaseRequest> DISPATCH_ORDER = comparing((LeaseRequest queued) -> queued.session().clientConfig().priority(), reverseOrder())
+            .thenComparing(LeaseRequest::requestPriority, reverseOrder())
+            .thenComparingLong(LeaseRequest::arrivalOrder);
 
     private final DeckRegistry decks;
     private final DealerProperties properties;
@@ -100,12 +105,12 @@ public class Scheduler {
         if (virtualModelContextWindow.isPresent()) {
             final int minContextWindow = virtualModelContextWindow.getAsInt();
             final var localProfileRefs = allProfileRefs.stream()
-                    .filter(profileRef -> !profileRef.external() && profileRef.profile().contextWindow() >= minContextWindow)
+                    .filter(profileRef -> !profileRef.external() && profileRef.profile().fitsContext(minContextWindow))
                     .sorted(comparingInt(profileRef -> profileRef.profile().contextWindow()))
                     .toList();
             final var externalProfileRefs = clientConfig.externalRouting()
                     ? allProfileRefs.stream()
-                            .filter(profileRef -> profileRef.external() && profileRef.profile().contextWindow() >= minContextWindow)
+                            .filter(profileRef -> profileRef.external() && profileRef.profile().fitsContext(minContextWindow))
                             .toList()
                     : List.<ModelProfileRef>of();
             return Stream.concat(localProfileRefs.stream(), externalProfileRefs.stream())
@@ -302,8 +307,7 @@ public class Scheduler {
                     decks.releaseLease(releasedLease.profileRef().serverRef(), releasedLease.id());
                 }
             });
-            leaseRequests.sort(comparing((LeaseRequest queued) -> queued.session().clientConfig().priority(), reverseOrder())
-                    .thenComparing(LeaseRequest::requestPriority, reverseOrder()).thenComparingLong(LeaseRequest::arrivalOrder));
+            leaseRequests.sort(DISPATCH_ORDER);
             final var queue = leaseRequests.iterator();
             while (queue.hasNext()) {
                 final var leaseRequest = queue.next();
@@ -346,7 +350,7 @@ public class Scheduler {
     private void considerEviction(final LeaseRequest leaseRequest, final ModelProfileRef target, final List<LeaseId> blockers) {
         final var victims = blockers.stream()
                 .flatMap(leaseId -> leaseHolderOf(leaseId, target.serverRef()).stream())
-                .filter(leaseHolder -> leaseHolder.clientConfig().priority().compareTo(leaseRequest.session().clientConfig().priority()) < 0)
+                .filter(leaseHolder -> outranks(leaseRequest, leaseHolder))
                 .toList();
         // evicts only when every blocking lease has a holder of lower client priority than the request's
         if (victims.size() < blockers.size()) {
@@ -370,6 +374,11 @@ public class Scheduler {
                 }
             }
         });
+    }
+
+    /** Whether {@code leaseRequest}'s client outranks {@code leaseHolder}'s: only a higher client priority evicts (D59). */
+    private static boolean outranks(final LeaseRequest leaseRequest, final Session leaseHolder) {
+        return leaseRequest.session().clientConfig().priority().compareTo(leaseHolder.clientConfig().priority()) > 0;
     }
 
     /** The session holding {@code leaseId} on {@code serverRef}, if any. */

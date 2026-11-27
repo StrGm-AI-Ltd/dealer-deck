@@ -8,11 +8,11 @@ import ai.strgm.dealer.config.DealerProperties.ClientConfig;
 import ai.strgm.dealer.api.model.SessionLeaseState;
 import ai.strgm.deck.api.model.LeaseState;
 import ai.strgm.deck.client.model.DeckLease;
-import ai.strgm.deck.client.model.DeckProfile.TokenPrices;
 import ai.strgm.types.LeaseId;
 import ai.strgm.types.ModelName;
 import ai.strgm.types.SessionId;
 import ai.strgm.types.SessionRef;
+import ai.strgm.types.TokenPrices;
 import java.time.Duration;
 import java.time.Instant;
 import org.jspecify.annotations.Nullable;
@@ -23,9 +23,6 @@ import org.jspecify.annotations.Nullable;
  * under its lock.
  */
 public final class Session {
-    /** Prices are per million tokens. */
-    private static final double TOKENS_PER_MILLION = 1_000_000.0;
-
     /** The lease a session holds; its profile and id are set and cleared together. */
     public record HeldLease(ModelProfileRef profileRef, LeaseId id) {}
 
@@ -143,8 +140,7 @@ public final class Session {
         this.promptTokens += promptTokens;
         this.cachedTokens += cachedTokens;
         this.completionTokens += completionTokens;
-        costUsd += ((promptTokens - cachedTokens) * prices.inputPerMTok() + cachedTokens * prices.cachedInputPerMTok()
-                + completionTokens * prices.outputPerMTok()) / TOKENS_PER_MILLION;
+        costUsd += prices.costUsd(promptTokens, cachedTokens, completionTokens);
     }
 
     public int inFlight() {
@@ -161,7 +157,7 @@ public final class Session {
      * lease time. Returns whether it was marked.
      */
     public boolean markEvicting(final Instant now, final Duration minLease) {
-        if (evictPending || (leaseReadyAt != null && leaseReadyAt.plus(minLease).isAfter(now))) {
+        if (evictPending || withinMinimumLease(now, minLease)) {
             return false;
         }
         evictPending = true;
@@ -184,8 +180,22 @@ public final class Session {
 
     /** Clears the session's lease if it has been idle for longer than {@code idle}, and returns it, for release on DECK. */
     public @Nullable HeldLease clearLeaseIfIdle(final Instant now, final Duration idle) {
-        return inFlight == 0 && !evictPending && Duration.between(lastActivity, now).compareTo(idle) > 0
-                ? clearLease(SessionLeaseState.RELEASED_IDLE) : null;
+        return inFlight == 0 && !evictPending && idleTime(now).compareTo(idle) > 0 ? clearLease(SessionLeaseState.RELEASED_IDLE) : null;
+    }
+
+    /** Whether the session's lease became ready less than {@code minLease} before {@code now}, so it may not be evicted yet. */
+    private boolean withinMinimumLease(final Instant now, final Duration minLease) {
+        return leaseReadyAt != null && leaseReadyAt.plus(minLease).isAfter(now);
+    }
+
+    /** How long the session has been idle at {@code now}: zero while it has requests in flight. */
+    private Duration idleTime(final Instant now) {
+        return inFlight > 0 ? Duration.ZERO : Duration.between(lastActivity, now);
+    }
+
+    /** How long the session's lease has been ready at {@code now}, or null while it holds none, or none is ready yet. */
+    private @Nullable Duration leaseAge(final Instant now) {
+        return heldLease == null || leaseReadyAt == null ? null : Duration.between(leaseReadyAt, now);
     }
 
     private @Nullable HeldLease clearLease(final SessionLeaseState state) {
@@ -205,8 +215,7 @@ public final class Session {
                 mapNullable(heldLease, currentLease -> currentLease.profileRef().serverRef().config().egress()),
                 mapNullable(heldLease, currentLease -> currentLease.profileRef().profile().id()),
                 mapNullable(heldLease, HeldLease::id),
-                leaseState, heldLease == null || leaseReadyAt == null ? null : Duration.between(leaseReadyAt, now),
-                inFlight > 0 ? Duration.ZERO : Duration.between(lastActivity, now),
+                leaseState, leaseAge(now), idleTime(now),
                 inFlight, evictPending, requests, promptTokens, cachedTokens, completionTokens, costUsd);
     }
 }
