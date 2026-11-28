@@ -14,6 +14,8 @@ dependencyManagement {
 // Also small utilities both share (ai.strgm.util).
 dependencies {
     api 'com.fasterxml.jackson.core:jackson-annotations'
+    // ChatRequest reads a chat request's JSON
+    api 'tools.jackson.core:jackson-databind'
     api 'org.jspecify:jspecify'
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'

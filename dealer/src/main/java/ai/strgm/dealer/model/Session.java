@@ -1,0 +1,221 @@
+package ai.strgm.dealer.model;
+
+import static ai.strgm.util.Nulls.mapNullable;
+import static java.lang.Math.max;
+import static java.util.Objects.requireNonNull;
+
+import ai.strgm.dealer.config.DealerProperties.ClientConfig;
+import ai.strgm.dealer.api.model.SessionLeaseState;
+import ai.strgm.deck.api.model.LeaseState;
+import ai.strgm.deck.client.model.DeckLease;
+import ai.strgm.types.LeaseId;
+import ai.strgm.types.ModelName;
+import ai.strgm.types.SessionId;
+import ai.strgm.types.SessionRef;
+import ai.strgm.types.TokenPrices;
+import java.time.Duration;
+import java.time.Instant;
+import org.jspecify.annotations.Nullable;
+
+/**
+ * An agent session as DEALER's scheduler tracks it: the lease it holds, its requests in flight and its usage. A
+ * session holds one lease and queues one lease request at a time (#64). Not thread-safe: the scheduler calls it
+ * under its lock.
+ */
+public final class Session {
+    /** The lease a session holds; its profile and id are set and cleared together. */
+    public record HeldLease(ModelProfileRef profileRef, LeaseId id) {}
+
+    private final ClientConfig clientConfig;
+    private final SessionId id;
+    /** The model of the session's lease, or of its last one. */
+    private @Nullable ModelName modelName;
+    private @Nullable HeldLease heldLease;
+    private SessionLeaseState leaseState = SessionLeaseState.NONE;
+    /** When the session's lease, or its last one, became ready; null until a lease of the session first is. */
+    private @Nullable Instant leaseReadyAt;
+    private Instant lastActivity = Instant.now();
+    private int inFlight;
+    private boolean evictPending;
+    private @Nullable LeaseRequest pendingLeaseRequest;
+    private int requests;
+    private long promptTokens;
+    private long cachedTokens;
+    private long completionTokens;
+    // TODO(#104): a money amount with its currency, instead of a bare double whose currency only its name gives
+    private double costUsd;
+
+    public Session(final ClientConfig clientConfig, final SessionId id) {
+        this.clientConfig = clientConfig;
+        this.id = id;
+    }
+
+    public ClientConfig clientConfig() {
+        return clientConfig;
+    }
+
+    public SessionId id() {
+        return id;
+    }
+
+    /** The reference DECK knows the session by. */
+    public SessionRef ref() {
+        return SessionRef.of(clientConfig.name(), id);
+    }
+
+    /** Counts a new request, and restarts the session's idle time. */
+    public void recordRequest() {
+        requests++;
+        lastActivity = Instant.now();
+    }
+
+    /** The session's queued lease request, if any. */
+    public @Nullable LeaseRequest pendingLeaseRequest() {
+        return pendingLeaseRequest;
+    }
+
+    public void queue(final LeaseRequest leaseRequest) {
+        pendingLeaseRequest = leaseRequest;
+    }
+
+    /** Forgets a queued lease request that was cancelled; a newer one stays. */
+    public void dequeue(final LeaseRequest leaseRequest) {
+        if (pendingLeaseRequest == leaseRequest) {
+            pendingLeaseRequest = null;
+        }
+    }
+
+    /** Whether a request for {@code modelName} can use the session's lease: it holds one for that model, not being evicted. */
+    public boolean canReuseLease(final ModelName modelName) {
+        return heldLease != null && !evictPending && modelName.equals(this.modelName);
+    }
+
+    /** Places another request on the session's lease, which {@link #canReuseLease} allowed. */
+    public RequestPlacement reuseLease() {
+        requireNonNull(heldLease, "canReuse() found a lease");
+        inFlight++;
+        return new RequestPlacement(this, heldLease.profileRef(), heldLease.id());
+    }
+
+    public boolean holdsLease() {
+        return heldLease != null;
+    }
+
+    /** Whether the session holds lease {@code leaseId} on {@code serverRef}. */
+    public boolean holds(final LeaseId leaseId, final DeckServerRef serverRef) {
+        return heldLease != null && heldLease.id().equals(leaseId) && heldLease.profileRef().serverRef() == serverRef;
+    }
+
+    public @Nullable HeldLease heldLease() {
+        return heldLease;
+    }
+
+    /** Places the session's queued lease request on a lease DECK has just granted. */
+    public RequestPlacement placeOnLease(final LeaseRequest leaseRequest, final ModelProfileRef profileRef, final DeckLease grantedLease) {
+        modelName = leaseRequest.modelName();
+        heldLease = new HeldLease(profileRef, grantedLease.id());
+        if (grantedLease.state() == LeaseState.READY) {
+            markReady(grantedLease);
+        } else {
+            leaseState = SessionLeaseState.fromValue(grantedLease.state().getValue());
+        }
+        inFlight++;
+        pendingLeaseRequest = null;
+        return new RequestPlacement(this, profileRef, grantedLease.id());
+    }
+
+    public boolean isReady() {
+        return leaseState == SessionLeaseState.READY;
+    }
+
+    public void markReady(final DeckLease readyLease) {
+        leaseState = SessionLeaseState.READY;
+        leaseReadyAt = readyLease.readyAt() == null ? Instant.now() : readyLease.readyAt();
+    }
+
+    /** Ends a request on the session's lease: undoes its in-flight count and adds its usage. */
+    public void endRequest(final long promptTokens, final long cachedTokens, final long completionTokens, final TokenPrices prices) {
+        inFlight = max(0, inFlight - 1);
+        lastActivity = Instant.now();
+        this.promptTokens += promptTokens;
+        this.cachedTokens += cachedTokens;
+        this.completionTokens += completionTokens;
+        costUsd += prices.costUsd(promptTokens, cachedTokens, completionTokens);
+    }
+
+    public int inFlight() {
+        return inFlight;
+    }
+
+    /** Whether the session's lease is to be evicted and its last request has ended. */
+    public boolean evictionDue() {
+        return evictPending && inFlight == 0;
+    }
+
+    /**
+     * Marks the session's lease for eviction, unless it's marked already or hasn't been ready for the minimum
+     * lease time. Returns whether it was marked.
+     */
+    public boolean markEvicting(final Instant now, final Duration minLease) {
+        if (evictPending || withinMinimumLease(now, minLease)) {
+            return false;
+        }
+        evictPending = true;
+        leaseState = SessionLeaseState.EVICTING;
+        return true;
+    }
+
+    /** Clears the session's lease and returns it, for the caller to evict on DECK. */
+    public @Nullable HeldLease clearLeaseForEviction() {
+        return clearLease(SessionLeaseState.EVICTED);
+    }
+
+    /**
+     * For a model switch: clears the session's lease once its requests have ended, and returns it for the caller to
+     * release on DECK, so the session never holds two leases (#64). Null while it has requests in flight.
+     */
+    public @Nullable HeldLease clearLeaseForSwitch() {
+        return inFlight == 0 ? clearLease(SessionLeaseState.RELEASED) : null;
+    }
+
+    /** Clears the session's lease if it has been idle for longer than {@code idle}, and returns it, for release on DECK. */
+    public @Nullable HeldLease clearLeaseIfIdle(final Instant now, final Duration idle) {
+        return inFlight == 0 && !evictPending && idleTime(now).compareTo(idle) > 0 ? clearLease(SessionLeaseState.RELEASED_IDLE) : null;
+    }
+
+    /** Whether the session's lease became ready less than {@code minLease} before {@code now}, so it may not be evicted yet. */
+    private boolean withinMinimumLease(final Instant now, final Duration minLease) {
+        return leaseReadyAt != null && leaseReadyAt.plus(minLease).isAfter(now);
+    }
+
+    /** How long the session has been idle at {@code now}: zero while it has requests in flight. */
+    private Duration idleTime(final Instant now) {
+        return inFlight > 0 ? Duration.ZERO : Duration.between(lastActivity, now);
+    }
+
+    /** How long the session's lease has been ready at {@code now}, or null while it holds none, or none is ready yet. */
+    private @Nullable Duration leaseAge(final Instant now) {
+        return heldLease == null || leaseReadyAt == null ? null : Duration.between(leaseReadyAt, now);
+    }
+
+    private @Nullable HeldLease clearLease(final SessionLeaseState state) {
+        final var clearedLease = heldLease;
+        if (clearedLease != null) {
+            heldLease = null;
+            evictPending = false;
+            leaseState = state;
+        }
+        return clearedLease;
+    }
+
+    /** The session's state at {@code now}, for the scheduler's report. */
+    public SessionSnapshot snapshot(final Instant now) {
+        return new SessionSnapshot(clientConfig.name(), id, modelName,
+                mapNullable(heldLease, currentLease -> currentLease.profileRef().serverRef().name()),
+                mapNullable(heldLease, currentLease -> currentLease.profileRef().serverRef().config().egress()),
+                mapNullable(heldLease, currentLease -> currentLease.profileRef().profile().id()),
+                mapNullable(heldLease, HeldLease::id),
+                leaseState, leaseAge(now), idleTime(now),
+                inFlight, evictPending, requests, promptTokens, cachedTokens, completionTokens, costUsd);
+    }
+}

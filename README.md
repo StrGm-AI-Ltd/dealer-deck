@@ -117,7 +117,9 @@ java -jar dealer/build/libs/dealer.jar                                  # :8080 
 
 | Module | What it is |
 |---|---|
+| `types` | The microtypes (identifiers, names and bounded values) and small utilities DEALER and DECK share (`ai.strgm.util`) |
 | `api` | The OpenAPI documents (the single source of truth) and the code generated from them |
+| `deck-client` | DECK's client (`ai.strgm.deck.client`): one `DeckClient` per DECK server, used by DEALER and the DEALER UI |
 | `dealer` | The router (Spring Boot 4, Java 21) |
 | `deck` | What every DECK server shares (`ai.strgm.deck`): the DECK API's web layer, the `DeckServer` interface and the lease store |
 | `deck-openai` | The DECK server backed by an OpenAI-compatible provider: Nebius by default, or a local server such as oMLX |

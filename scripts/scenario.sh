@@ -23,10 +23,14 @@ PROMPTS=(
   "In two sentences, when is a database index a bad idea?"
 )
 
+auth_header() { # api-key: the one place the script writes how an API key is presented
+  printf 'Authorization: Bearer %s' "$1"
+}
+
 ask() { # name key session model prompt
   local hdr text status server profile
   hdr=$(mktemp)
-  text=$(curl -s -N -D "$hdr" -H "Authorization: Bearer $2" -H "X-Session-Id: $3" -H 'Content-Type: application/json' \
+  text=$(curl -s -N -D "$hdr" -H "$(auth_header "$2")" -H "X-Session-Id: $3" -H 'Content-Type: application/json' \
     -d "{\"model\":\"$4\",\"stream\":true,\"max_tokens\":${MAX_TOKENS:-60},\"messages\":[{\"role\":\"user\",\"content\":\"$5\"}]}" \
     "$DEALER/v1/chat/completions" | python3 -c '
 import sys, json
@@ -69,7 +73,7 @@ ask vip key-vip vip-1 "$VIP_MODEL" "Name one risk of eviction in one sentence."
 echo "------ vip is done; its lease idles out after the idle timeout, then agent-b resumes on the stub ------"
 wait $A $B
 echo "------ evictions and per-session usage ------"
-curl -s -H "Authorization: Bearer ${DEALER_METRICS_KEY:-metrics-key}" "$DEALER/metrics/state" | python3 -c '
+curl -s -H "$(auth_header "${DEALER_METRICS_KEY:-metrics-key}")" "$DEALER/metrics/state" | python3 -c '
 import sys, json
 s = json.load(sys.stdin)
 for e in s["evictions"]:

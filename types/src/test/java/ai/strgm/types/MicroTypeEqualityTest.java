@@ -88,14 +88,10 @@ class MicroTypeEqualityTest {
     @Test
     void differentTypesWithTheSameValueAreNeverEqual() {
         final List<Object> microTypes = oneOfEveryType();
-        for (final var microType : microTypes) {
-            for (final var otherType : microTypes) {
-                if (otherType != microType) {
-                    assertNotEquals(microType, otherType, microType.getClass().getSimpleName() + " equals "
-                            + otherType.getClass().getSimpleName());
-                }
-            }
-        }
+        microTypes.forEach(microType -> microTypes.stream()
+                .filter(otherType -> otherType != microType)
+                .forEach(otherType -> assertNotEquals(microType, otherType, microType.getClass().getSimpleName() + " equals "
+                        + otherType.getClass().getSimpleName())));
     }
 
     @Test
