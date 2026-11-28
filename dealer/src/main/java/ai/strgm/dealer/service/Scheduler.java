@@ -394,6 +394,7 @@ public class Scheduler {
         synchronized (lock) {
             final var idle = Duration.ofSeconds(properties.timers().idleSeconds());
             final var now = Instant.now();
+            // TODO(#99): close the sessions abandoned for longer than a configurable time: no lease, and no request in flight or queued
             sessions.values().forEach(session -> {
                 final var releasedLease = session.clearLeaseIfIdle(now, idle);
                 if (releasedLease != null) {

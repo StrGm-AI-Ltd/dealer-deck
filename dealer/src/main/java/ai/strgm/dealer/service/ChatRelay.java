@@ -57,6 +57,7 @@ public final class ChatRelay {
                 out.flush();
             }
         } finally {
+            // TODO(#114): log the request's usage whether or not the client asked for it, for metrics and possibly routing decisions
             scheduler.endRequest(placement, promptTokens, cachedTokens, completionTokens);
         }
     }
